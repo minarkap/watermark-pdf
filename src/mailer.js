@@ -1,0 +1,52 @@
+import { google } from 'googleapis';
+import nodemailer from 'nodemailer';
+import fs from 'fs/promises';
+
+const {
+  GMAIL_CLIENT_ID,
+  GMAIL_CLIENT_SECRET,
+  GMAIL_REDIRECT_URI,
+  GMAIL_REFRESH_TOKEN,
+  GMAIL_SENDER,
+} = process.env;
+
+const oAuth2Client = new google.auth.OAuth2(
+  GMAIL_CLIENT_ID,
+  GMAIL_CLIENT_SECRET,
+  GMAIL_REDIRECT_URI
+);
+
+oAuth2Client.setCredentials({ refresh_token: GMAIL_REFRESH_TOKEN });
+
+export async function sendEmailWithAttachment({ to, subject, text, attachmentPath, attachmentName }) {
+  const accessTokenObj = await oAuth2Client.getAccessToken();
+  const accessToken = typeof accessTokenObj === 'string' ? accessTokenObj : accessTokenObj?.token;
+
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      type: 'OAuth2',
+      user: GMAIL_SENDER,
+      clientId: GMAIL_CLIENT_ID,
+      clientSecret: GMAIL_CLIENT_SECRET,
+      refreshToken: GMAIL_REFRESH_TOKEN,
+      accessToken,
+    },
+  });
+
+  const attachment = await fs.readFile(attachmentPath);
+
+  await transporter.sendMail({
+    from: `PDF Delivery <${GMAIL_SENDER}>`,
+    to,
+    subject,
+    text,
+    attachments: [
+      {
+        filename: attachmentName,
+        content: attachment,
+        contentType: 'application/pdf',
+      },
+    ],
+  });
+}
