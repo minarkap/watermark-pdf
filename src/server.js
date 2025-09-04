@@ -22,11 +22,16 @@ app.get('/health', (_req, res) => {
 });
 
 app.post('/webhook', async (req, res) => {
+  const { fullName, email, purchasedAt } = req.body || {};
+  if (!fullName || !email) {
+    return res.status(400).json({ error: 'Faltan parámetros: fullName y email son requeridos' });
+  }
+
+  // Responder inmediatamente
+  res.json({ ok: true, message: "Procesando en segundo plano." });
+
+  // --- Ejecutar el resto en segundo plano ---
   try {
-    const { fullName, email, purchasedAt } = req.body || {};
-    if (!fullName || !email) {
-      return res.status(400).json({ error: 'Faltan parámetros: fullName y email son requeridos' });
-    }
     const timestamp = purchasedAt || new Date().toISOString();
     const watermarkText = `${fullName} | ${email} | ${timestamp}`;
 
@@ -53,22 +58,18 @@ app.post('/webhook', async (req, res) => {
     await fs.writeFile(outputPath, finalBytes);
 
     // 5. Enviar correo (best-effort)
-    try {
-      await sendEmailWithAttachment({
-        to: email,
-        subject: 'Tu PDF con acceso personal',
-        text: 'Adjuntamos tu copia personalizada del material.',
-        attachmentPath: outputPath,
-        attachmentName: 'analiticas_esenciales.pdf',
-      });
-    } catch (e) {
-      console.warn('No se pudo enviar el correo:', e?.message || e);
-    }
+    await sendEmailWithAttachment({
+      to: email,
+      subject: 'Tu PDF con acceso personal',
+      text: 'Adjuntamos tu copia personalizada del material.',
+      attachmentPath: outputPath,
+      attachmentName: 'analiticas_esenciales.pdf',
+    });
 
-    res.json({ ok: true, outputPath });
+    console.log(`Proceso completado para ${email}`);
+
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Error procesando el webhook' });
+    console.error(`Error procesando en segundo plano para ${email}:`, err);
   }
 });
 
