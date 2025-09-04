@@ -42,7 +42,7 @@ export async function addSecurityFeatures(pdfDoc, watermarkText, documentHash) {
       </svg>
     `;
 
-    const dpi = 300;
+    const dpi = 96; // Bajar la resolución para la prueba
     const bandPngBuffer = await sharp(Buffer.from(bandSvg), { density: dpi }).png().toBuffer();
     const bandImage = await pdfDoc.embedPng(bandPngBuffer);
 
