@@ -1,5 +1,4 @@
 import { google } from 'googleapis';
-import nodemailer from 'nodemailer';
 import fs from 'fs/promises';
 
 const {
@@ -19,43 +18,46 @@ const oAuth2Client = new google.auth.OAuth2(
 oAuth2Client.setCredentials({ refresh_token: GMAIL_REFRESH_TOKEN });
 
 export async function sendEmailWithAttachment({ to, subject, text, attachmentPath, attachmentName }) {
-  console.log(`[MAIL] Preparando envío a ${to}`);
-  const accessTokenObj = await oAuth2Client.getAccessToken();
-  const accessToken = typeof accessTokenObj === 'string' ? accessTokenObj : accessTokenObj?.token;
-  if (!accessToken) {
-    console.error('[MAIL] No se pudo obtener accessToken de OAuth2');
-  } else {
-    console.log('[MAIL] Access token obtenido');
-  }
-
-  const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      type: 'OAuth2',
-      user: GMAIL_SENDER,
-      clientId: GMAIL_CLIENT_ID,
-      clientSecret: GMAIL_CLIENT_SECRET,
-      refreshToken: GMAIL_REFRESH_TOKEN,
-      accessToken,
-    },
-  });
+  console.log(`[MAIL] Preparando envío a ${to} via Gmail API`);
+  const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
 
   const attachment = await fs.readFile(attachmentPath);
   console.log(`[MAIL] Adjunto leído (${attachment.length} bytes)`);
 
-  console.log('[MAIL] Enviando correo...');
-  await transporter.sendMail({
-    from: `PDF Delivery <${GMAIL_SENDER}>`,
-    to,
-    subject,
+  const boundary = 'mixed_' + Date.now();
+  const messageParts = [
+    `From: PDF Delivery <${GMAIL_SENDER}>`,
+    `To: ${to}`,
+    `Subject: ${subject}`,
+    'MIME-Version: 1.0',
+    `Content-Type: multipart/mixed; boundary=${boundary}`,
+    '',
+    `--${boundary}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    'Content-Transfer-Encoding: 7bit',
+    '',
     text,
-    attachments: [
-      {
-        filename: attachmentName,
-        content: attachment,
-        contentType: 'application/pdf',
-      },
-    ],
+    '',
+    `--${boundary}`,
+    `Content-Type: application/pdf; name="${attachmentName}"`,
+    'Content-Transfer-Encoding: base64',
+    `Content-Disposition: attachment; filename="${attachmentName}"`,
+    '',
+    attachment.toString('base64'),
+    `--${boundary}--`,
+  ];
+
+  const rawMessage = messageParts.join('\r\n');
+  const encodedMessage = Buffer.from(rawMessage)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+
+  console.log('[MAIL] Enviando mensaje via Gmail API...');
+  await gmail.users.messages.send({
+    userId: 'me',
+    requestBody: { raw: encodedMessage },
   });
-  console.log('[MAIL] Correo enviado');
+  console.log('[MAIL] Correo enviado via Gmail API');
 }
