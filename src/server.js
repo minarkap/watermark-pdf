@@ -35,8 +35,8 @@ app.post('/webhook', async (req, res) => {
   try {
     const timestamp = purchasedAt || new Date().toISOString();
     const watermarkText = `${fullName} | ${email} | ${timestamp}`;
-    
-    // Determinar origen del PDF base (ruta directa o descarga por URL)
+
+    // Intentar leer KO_ebook.pdf de disco; si no existe en el contenedor, descargar desde BASE_PDF_URL
     const configuredPath = process.env.BASE_PDF_PATH || path.join(__dirname, '..', 'KO_ebook.pdf');
     let pdfBytes;
     try {
@@ -44,17 +44,14 @@ app.post('/webhook', async (req, res) => {
       pdfBytes = await fs.readFile(configuredPath);
     } catch (readErr) {
       if (readErr?.code === 'ENOENT' && process.env.BASE_PDF_URL) {
-        const downloadPath = configuredPath;
-        console.log('[FLOW] PDF base no encontrado. Descargando desde BASE_PDF_URL a', downloadPath);
+        console.log('[FLOW] PDF base no encontrado. Descargando desde BASE_PDF_URL');
         const resp = await fetch(process.env.BASE_PDF_URL);
         if (!resp.ok) {
           throw new Error(`No se pudo descargar BASE_PDF_URL: ${resp.status} ${resp.statusText}`);
         }
         const arrayBuffer = await resp.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
-        await fs.writeFile(downloadPath, buffer);
-        console.log('[FLOW] PDF base descargado y guardado');
-        pdfBytes = buffer;
+        pdfBytes = Buffer.from(arrayBuffer);
+        console.log('[FLOW] PDF base descargado en memoria');
       } else {
         throw readErr;
       }
