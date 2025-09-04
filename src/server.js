@@ -36,7 +36,7 @@ app.post('/webhook', async (req, res) => {
     const timestamp = purchasedAt || new Date().toISOString();
     const watermarkText = `${fullName} | ${email} | ${timestamp}`;
 
-    const sourcePdfPath = path.join(__dirname, '..', 'analiticas_esenciales.pdf');
+    const sourcePdfPath = path.join(__dirname, '..', 'KO_ebook.pdf');
     const pdfBytes = await fs.readFile(sourcePdfPath);
     
     // 1. Cargar PDF y aplicar watermark central
@@ -59,7 +59,7 @@ app.post('/webhook', async (req, res) => {
     // 4. Guardar PDF final
     const tmpDir = path.join(__dirname, '..', 'tmp');
     await fs.mkdir(tmpDir, { recursive: true });
-    const outputPath = path.join(tmpDir, `analiticas_esenciales_${Date.now()}.pdf`);
+    const outputPath = path.join(tmpDir, `KO_ebook_${Date.now()}.pdf`);
     console.log('[FLOW] Guardando PDF final a', outputPath);
     const finalBytes = await pdfDoc.save();
     await fs.writeFile(outputPath, finalBytes);
@@ -72,7 +72,7 @@ app.post('/webhook', async (req, res) => {
       subject: 'Tu PDF con acceso personal',
       text: 'Adjuntamos tu copia personalizada del material.',
       attachmentPath: outputPath,
-      attachmentName: 'analiticas_esenciales.pdf',
+      attachmentName: 'KO_ebook.pdf',
     });
     console.log('[FLOW] Email enviado');
 
