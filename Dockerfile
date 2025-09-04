@@ -1,11 +1,11 @@
 # Etapa de dependencias
-FROM node:18-alpine AS deps
+FROM node:18-slim AS deps
 WORKDIR /usr/src/app
 COPY package.json package-lock.json ./
 RUN npm ci --only=production
 
 # Etapa de producción
-FROM node:18-alpine AS runner
+FROM node:18-slim AS runner
 WORKDIR /usr/src/app
 COPY --from=deps /usr/src/app/node_modules ./node_modules
 COPY . .
