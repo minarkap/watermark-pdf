@@ -12,4 +12,4 @@ COPY . .
 
 # Railway usa la variable PORT para exponer el servicio
 EXPOSE 3000
-CMD [ "node", "src/server.js" ]
+CMD [ "npm", "start" ]
