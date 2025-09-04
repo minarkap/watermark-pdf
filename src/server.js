@@ -69,7 +69,10 @@ app.post('/webhook', async (req, res) => {
     console.log(`Proceso completado para ${email}`);
 
   } catch (err) {
-    console.error(`Error procesando en segundo plano para ${email}:`, err);
+    console.error(`--- ERROR FATAL EN SEGUNDO PLANO PARA ${email} ---`);
+    console.error("Mensaje:", err.message);
+    console.error("Stack:", err.stack);
+    console.error("--- FIN DEL ERROR FATAL ---");
   }
 });
 
