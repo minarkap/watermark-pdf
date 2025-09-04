@@ -10,6 +10,6 @@ WORKDIR /usr/src/app
 COPY --from=deps /usr/src/app/node_modules ./node_modules
 COPY . .
 
-# Railway usa la variable PORT para exponer el servicio
-EXPOSE 3000
+# Railway expone el puerto asignado en la variable PORT (usual: 8080)
+EXPOSE 8080
 CMD [ "npm", "start" ]

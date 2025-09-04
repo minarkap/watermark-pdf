@@ -10,6 +10,7 @@ import { PDFDocument } from 'pdf-lib';
 import { createHash } from 'crypto';
 
 dotenv.config();
+console.log('Boot OK');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -77,6 +78,7 @@ app.post('/webhook', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
+console.log('Binding on PORT=', PORT);
 app.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
 });
