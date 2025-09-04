@@ -7,6 +7,12 @@ RUN npm ci --only=production
 # Etapa de producción
 FROM node:18-slim AS runner
 WORKDIR /usr/src/app
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    fontconfig \
+    fonts-dejavu-core \
+  && fc-cache -f \
+  && rm -rf /var/lib/apt/lists/*
 COPY --from=deps /usr/src/app/node_modules ./node_modules
 COPY . .
 

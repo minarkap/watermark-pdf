@@ -27,9 +27,9 @@ export async function addSecurityFeatures(pdfDoc, watermarkText, documentHash) {
       <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${bandHeight}">
         <style>
           .bg { fill: rgb(51, 51, 51); }
-          .l1 { font-family: Helvetica, Arial, sans-serif; font-size: 9px; font-weight: bold; fill: white; }
-          .l2 { font-family: Helvetica, Arial, sans-serif; font-size: 6px; fill: rgb(153, 204, 255); }
-          .l3 { font-family: Helvetica, Arial, sans-serif; font-size: 6px; font-style: italic; fill: white; }
+          .l1 { font-family: 'DejaVu Sans', Helvetica, Arial, sans-serif; font-size: 9px; font-weight: bold; fill: white; }
+          .l2 { font-family: 'DejaVu Sans', Helvetica, Arial, sans-serif; font-size: 6px; fill: rgb(153, 204, 255); }
+          .l3 { font-family: 'DejaVu Sans', Helvetica, Arial, sans-serif; font-size: 6px; font-style: italic; fill: white; }
         </style>
         <rect width="100%" height="100%" class="bg" />
         <svg x="10" y="${(bandHeight / 2) - 10}" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -42,7 +42,7 @@ export async function addSecurityFeatures(pdfDoc, watermarkText, documentHash) {
       </svg>
     `;
 
-    const dpi = 96; // Bajar la resolución para la prueba
+    const dpi = 300; // Alta resolución para mejor nitidez
     const bandPngBuffer = await sharp(Buffer.from(bandSvg), { density: dpi }).png().toBuffer();
     const bandImage = await pdfDoc.embedPng(bandPngBuffer);
 
