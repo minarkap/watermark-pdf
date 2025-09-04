@@ -6,7 +6,8 @@ export async function applyCentralWatermark(pdfDoc, watermarkText) {
   console.log("--- APLICANDO WATERMARK CENTRAL ---");
 
   const pages = pdfDoc.getPages();
-  for (const page of pages) {
+  for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
+    const page = pages[pageIndex];
     const { width, height } = page.getSize();
 
     const fontSize = Math.max(12, Math.min(18, Math.floor(Math.min(width, height) * 0.02)));
@@ -20,8 +21,12 @@ export async function applyCentralWatermark(pdfDoc, watermarkText) {
   </g>
 </svg>`;
 
-    const pngBuffer = await sharp(Buffer.from(svg)).png().toBuffer();
-    const pngImage = await pdfDoc.embedPng(pngBuffer);
+    try {
+      console.log(`[WM] Renderizando watermark central (página ${pageIndex + 1}/${pages.length})`);
+      const pngBuffer = await sharp(Buffer.from(svg)).png().toBuffer();
+      console.log(`[WM] Watermark PNG listo (${pngBuffer.length} bytes)`);
+      const pngImage = await pdfDoc.embedPng(pngBuffer);
+      console.log(`[WM] Watermark embebido en PDF`);
 
     const targetWidth = width * 0.8;
     const scale = targetWidth / pngImage.width;
@@ -31,12 +36,17 @@ export async function applyCentralWatermark(pdfDoc, watermarkText) {
     const centerX = width / 2;
     const centerY = height / 2;
     
-    page.drawImage(pngImage, {
-      x: centerX - (drawWidth / 2),
-      y: centerY - (drawHeight / 2),
-      width: drawWidth,
-      height: drawHeight,
-      opacity: 0.5,
-    });
+      page.drawImage(pngImage, {
+        x: centerX - (drawWidth / 2),
+        y: centerY - (drawHeight / 2),
+        width: drawWidth,
+        height: drawHeight,
+        opacity: 0.5,
+      });
+      console.log(`[WM] Watermark dibujado en página ${pageIndex + 1}`);
+    } catch (err) {
+      console.error(`[WM] Error al generar/embeber watermark central en página ${pageIndex + 1}:`, err?.message);
+      throw err;
+    }
   }
 }

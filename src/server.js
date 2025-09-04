@@ -40,14 +40,19 @@ app.post('/webhook', async (req, res) => {
     const pdfBytes = await fs.readFile(sourcePdfPath);
     
     // 1. Cargar PDF y aplicar watermark central
+    console.log('[FLOW] Cargando PDF base');
     let pdfDoc = await PDFDocument.load(pdfBytes);
+    console.log('[FLOW] PDF cargado, aplicando watermark central');
     await applyCentralWatermark(pdfDoc, watermarkText);
     
     // 2. Guardar en buffer intermedio y calcular hash
+    console.log('[FLOW] Guardando PDF con watermark central (intermedio)');
     const watermarkedBytes = await pdfDoc.save();
     const documentHash = createHash('sha256').update(watermarkedBytes).digest('hex');
+    console.log('[FLOW] Hash calculado:', documentHash.slice(0, 16) + '...');
 
     // 3. Volver a cargar y aplicar banda de seguridad con el hash
+    console.log('[FLOW] Reabriendo PDF intermedio para aplicar banda de seguridad');
     pdfDoc = await PDFDocument.load(watermarkedBytes);
     await addSecurityFeatures(pdfDoc, watermarkText, documentHash);
 
@@ -55,10 +60,13 @@ app.post('/webhook', async (req, res) => {
     const tmpDir = path.join(__dirname, '..', 'tmp');
     await fs.mkdir(tmpDir, { recursive: true });
     const outputPath = path.join(tmpDir, `analiticas_esenciales_${Date.now()}.pdf`);
+    console.log('[FLOW] Guardando PDF final a', outputPath);
     const finalBytes = await pdfDoc.save();
     await fs.writeFile(outputPath, finalBytes);
+    console.log('[FLOW] PDF final escrito en disco');
 
     // 5. Enviar correo (best-effort)
+    console.log('[FLOW] Enviando email con adjunto...');
     await sendEmailWithAttachment({
       to: email,
       subject: 'Tu PDF con acceso personal',
@@ -66,6 +74,7 @@ app.post('/webhook', async (req, res) => {
       attachmentPath: outputPath,
       attachmentName: 'analiticas_esenciales.pdf',
     });
+    console.log('[FLOW] Email enviado');
 
     console.log(`Proceso completado para ${email}`);
 

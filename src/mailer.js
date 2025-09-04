@@ -19,8 +19,14 @@ const oAuth2Client = new google.auth.OAuth2(
 oAuth2Client.setCredentials({ refresh_token: GMAIL_REFRESH_TOKEN });
 
 export async function sendEmailWithAttachment({ to, subject, text, attachmentPath, attachmentName }) {
+  console.log(`[MAIL] Preparando envío a ${to}`);
   const accessTokenObj = await oAuth2Client.getAccessToken();
   const accessToken = typeof accessTokenObj === 'string' ? accessTokenObj : accessTokenObj?.token;
+  if (!accessToken) {
+    console.error('[MAIL] No se pudo obtener accessToken de OAuth2');
+  } else {
+    console.log('[MAIL] Access token obtenido');
+  }
 
   const transporter = nodemailer.createTransport({
     service: 'gmail',
@@ -35,7 +41,9 @@ export async function sendEmailWithAttachment({ to, subject, text, attachmentPat
   });
 
   const attachment = await fs.readFile(attachmentPath);
+  console.log(`[MAIL] Adjunto leído (${attachment.length} bytes)`);
 
+  console.log('[MAIL] Enviando correo...');
   await transporter.sendMail({
     from: `PDF Delivery <${GMAIL_SENDER}>`,
     to,
@@ -49,4 +57,5 @@ export async function sendEmailWithAttachment({ to, subject, text, attachmentPat
       },
     ],
   });
+  console.log('[MAIL] Correo enviado');
 }

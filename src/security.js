@@ -15,7 +15,8 @@ export async function addSecurityFeatures(pdfDoc, watermarkText, documentHash) {
   pdfDoc.setModificationDate(new Date());
 
   const pages = pdfDoc.getPages();
-  for (const page of pages) {
+  for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
+    const page = pages[pageIndex];
     const { width, height } = page.getSize();
     const bandHeight = 36;
 
@@ -43,14 +44,23 @@ export async function addSecurityFeatures(pdfDoc, watermarkText, documentHash) {
     `;
 
     const dpi = 300; // Alta resolución para mejor nitidez
-    const bandPngBuffer = await sharp(Buffer.from(bandSvg), { density: dpi }).png().toBuffer();
-    const bandImage = await pdfDoc.embedPng(bandPngBuffer);
+    try {
+      console.log(`[SECURITY] Renderizando banda (página ${pageIndex + 1}/${pages.length}) @ ${dpi} DPI`);
+      const bandPngBuffer = await sharp(Buffer.from(bandSvg), { density: dpi }).png().toBuffer();
+      console.log(`[SECURITY] Banda renderizada (${bandPngBuffer.length} bytes)`);
+      const bandImage = await pdfDoc.embedPng(bandPngBuffer);
+      console.log(`[SECURITY] Banda embebida en PDF`);
 
-    page.drawImage(bandImage, {
-      x: 0,
-      y: height - bandHeight,
-      width: width,
-      height: bandHeight,
-    });
+      page.drawImage(bandImage, {
+        x: 0,
+        y: height - bandHeight,
+        width: width,
+        height: bandHeight,
+      });
+      console.log(`[SECURITY] Banda dibujada en página ${pageIndex + 1}`);
+    } catch (err) {
+      console.error(`[SECURITY] Error al generar/embeber banda en página ${pageIndex + 1}:`, err?.message);
+      throw err;
+    }
   }
 }
