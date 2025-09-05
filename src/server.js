@@ -23,10 +23,11 @@ app.get('/health', (_req, res) => {
 });
 
 app.post('/webhook', async (req, res) => {
-  // Soportar payload de Kajabi
-  const body = req.body || {};
+  // Soportar payload de Kajabi: puede venir como array de eventos
+  const bodyRaw = req.body || {};
+  const body = Array.isArray(bodyRaw) ? (bodyRaw[0] || {}) : bodyRaw;
   const kajabiOfferTitle = body?.offer?.title;
-  const fullName = body?.member?.name || body?.member?.first_name && body?.member?.last_name ? `${body.member.first_name} ${body.member.last_name}` : body?.fullName;
+  const fullName = body?.member?.name || (body?.member?.first_name && body?.member?.last_name ? `${body.member.first_name} ${body.member.last_name}` : body?.fullName);
   const email = body?.member?.email || body?.email;
   const purchasedAt = body?.payment_transaction?.created_at || body?.purchasedAt;
   if (!fullName || !email) {
@@ -84,7 +85,7 @@ app.post('/webhook', async (req, res) => {
         pdfBytes = await fs.readFile(configuredPath);
       } catch (readErr) {
         if (readErr?.code === 'ENOENT' && process.env.BASE_PDF_URL) {
-          console.log('[FLOW] PDF base no encontrado. Descargando desde BASE_PDF_URL');
+          console.log('[FLOW] KO_ebook.pdf no existe. Descargando BASE_PDF_URL');
           const resp = await fetch(process.env.BASE_PDF_URL);
           if (!resp.ok) {
             throw new Error(`No se pudo descargar BASE_PDF_URL: ${resp.status} ${resp.statusText}`);
@@ -116,34 +117,7 @@ app.post('/webhook', async (req, res) => {
       console.log('[FLOW] PDF final escrito en disco');
       outputs.push({ path: outputPath, name: 'KO_ebook.pdf' });
     }
-    
-    // 1. Cargar PDF y aplicar watermark central
-    console.log('[FLOW] Cargando PDF base');
-    let pdfDoc = await PDFDocument.load(pdfBytes);
-    console.log('[FLOW] PDF cargado, aplicando watermark central');
-    await applyCentralWatermark(pdfDoc, watermarkText);
-    
-    // 2. Guardar en buffer intermedio y calcular hash
-    console.log('[FLOW] Guardando PDF con watermark central (intermedio)');
-    const watermarkedBytes = await pdfDoc.save();
-    const documentHash = createHash('sha256').update(watermarkedBytes).digest('hex');
-    console.log('[FLOW] Hash calculado:', documentHash.slice(0, 16) + '...');
 
-    // 3. Volver a cargar y aplicar banda de seguridad con el hash
-    console.log('[FLOW] Reabriendo PDF intermedio para aplicar banda de seguridad');
-    pdfDoc = await PDFDocument.load(watermarkedBytes);
-    await addSecurityFeatures(pdfDoc, watermarkText, documentHash);
-
-    // 4. Guardar PDF final
-    const tmpDir = path.join(__dirname, '..', 'tmp');
-    await fs.mkdir(tmpDir, { recursive: true });
-    const outputPath = path.join(tmpDir, `KO_ebook_${Date.now()}.pdf`);
-    console.log('[FLOW] Guardando PDF final a', outputPath);
-    const finalBytes = await pdfDoc.save();
-    await fs.writeFile(outputPath, finalBytes);
-    console.log('[FLOW] PDF final escrito en disco');
-
-    // 5. Enviar correo (best-effort)
     console.log('[FLOW] Enviando email con adjuntos...');
     await sendEmailWithAttachments({
       to: email,
@@ -151,6 +125,7 @@ app.post('/webhook', async (req, res) => {
       text: 'Adjuntamos tus descargables personalizados.',
       attachments: outputs,
     });
+
     console.log('[FLOW] Email enviado');
 
     console.log(`Proceso completado para ${email}`);
