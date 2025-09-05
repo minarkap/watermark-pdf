@@ -2,7 +2,7 @@ import express from 'express';
 import dotenv from 'dotenv';
 import { applyCentralWatermark } from './watermark.js';
 import { addSecurityFeatures } from './security.js';
-import { sendEmailWithAttachments, sendEmailWithAttachment } from './mailer.js';
+import { sendEmailWithAttachments } from './mailer.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
@@ -77,45 +77,8 @@ app.post('/webhook', async (req, res) => {
         console.log('[FLOW] Listo', outPath);
       }
     } else {
-      // Fallback: flujo único con BASE_PDF_PATH/URL o KO_ebook.pdf
-      const configuredPath = process.env.BASE_PDF_PATH || path.join(__dirname, '..', 'KO_ebook.pdf');
-      let pdfBytes;
-      try {
-        console.log('[FLOW] Intentando leer PDF base de', configuredPath);
-        pdfBytes = await fs.readFile(configuredPath);
-      } catch (readErr) {
-        if (readErr?.code === 'ENOENT' && process.env.BASE_PDF_URL) {
-          console.log('[FLOW] KO_ebook.pdf no existe. Descargando BASE_PDF_URL');
-          const resp = await fetch(process.env.BASE_PDF_URL);
-          if (!resp.ok) {
-            throw new Error(`No se pudo descargar BASE_PDF_URL: ${resp.status} ${resp.statusText}`);
-          }
-          const arrayBuffer = await resp.arrayBuffer();
-          pdfBytes = Buffer.from(arrayBuffer);
-          console.log('[FLOW] PDF base descargado en memoria');
-        } else {
-          throw readErr;
-        }
-      }
-      console.log('[FLOW] Cargando PDF base');
-      let pdfDoc = await PDFDocument.load(pdfBytes);
-      console.log('[FLOW] PDF cargado, aplicando watermark central');
-      await applyCentralWatermark(pdfDoc, watermarkText);
-      console.log('[FLOW] Guardando PDF con watermark central (intermedio)');
-      const watermarkedBytes = await pdfDoc.save();
-      const documentHash = createHash('sha256').update(watermarkedBytes).digest('hex');
-      console.log('[FLOW] Hash calculado:', documentHash.slice(0, 16) + '...');
-      console.log('[FLOW] Reabriendo PDF intermedio para aplicar banda de seguridad');
-      pdfDoc = await PDFDocument.load(watermarkedBytes);
-      await addSecurityFeatures(pdfDoc, watermarkText, documentHash);
-      const tmpDir = path.join(__dirname, '..', 'tmp');
-      await fs.mkdir(tmpDir, { recursive: true });
-      const outputPath = path.join(tmpDir, `KO_ebook_${Date.now()}.pdf`);
-      console.log('[FLOW] Guardando PDF final a', outputPath);
-      const finalBytes = await pdfDoc.save();
-      await fs.writeFile(outputPath, finalBytes);
-      console.log('[FLOW] PDF final escrito en disco');
-      outputs.push({ path: outputPath, name: 'KO_ebook.pdf' });
+      console.log('[FLOW] Oferta no mapeada, no se procesa. Título recibido:', kajabiOfferTitle);
+      return;
     }
 
     console.log('[FLOW] Enviando email con adjuntos...');
