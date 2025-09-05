@@ -12,6 +12,29 @@ import { exec as execCb } from 'child_process';
 import { promisify } from 'util';
 const exec = promisify(execCb);
 
+// Comprime un PDF si supera cierto umbral (bytes). Devuelve la ruta del archivo a usar finalmente.
+async function compressIfTooLarge(inputPath, maxBytes = 10 * 1024 * 1024) {
+  try {
+    const stat = await fs.stat(inputPath);
+    if (stat.size <= maxBytes) return inputPath;
+    console.log(`[FLOW] Compresión: ${inputPath} pesa ${(stat.size / (1024*1024)).toFixed(1)} MiB, recomprimiendo...`);
+    const outPath = inputPath.replace(/\.pdf$/i, '.compressed.pdf');
+    // Perfil /ebook mantiene buena calidad visual a tamaño razonable
+    await exec(`gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.6 -dPDFSETTINGS=/ebook -dDetectDuplicateImages=true -dCompressFonts=true -dDownsampleColorImages=true -dColorImageResolution=144 -dDownsampleGrayImages=true -dGrayImageResolution=144 -dDownsampleMonoImages=true -dMonoImageResolution=144 -sOutputFile=${outPath} -f ${inputPath} | cat`);
+    const outStat = await fs.stat(outPath);
+    console.log(`[FLOW] Compresión lista: ${(outStat.size / (1024*1024)).toFixed(1)} MiB`);
+    // Si no mejora, usa el original
+    if (outStat.size >= stat.size) {
+      await fs.rm(outPath).catch(() => {});
+      return inputPath;
+    }
+    return outPath;
+  } catch (e) {
+    console.log('[FLOW] Compresión omitida por error:', e?.message || e);
+    return inputPath;
+  }
+}
+
 dotenv.config();
 console.log('Boot OK');
 
@@ -95,8 +118,9 @@ app.post('/webhook', async (req, res) => {
             const outName = path.basename(pdfPath).replace(/\.pdf$/i, `_${Date.now()}.pdf`);
             const outPath = path.join(tmpDir, outName);
             await fs.writeFile(outPath, finalBytes);
-            outputs.push({ path: outPath, name: outName });
-            console.log('[FLOW] Listo', outPath);
+            const sendPath = await compressIfTooLarge(outPath);
+            outputs.push({ path: sendPath, name: path.basename(sendPath) });
+            console.log('[FLOW] Listo', sendPath);
           } catch (fileErr) {
             console.error('[FLOW] Error procesando', pdfPath, '-', fileErr?.message);
             continue;
@@ -157,8 +181,9 @@ app.post('/webhook', async (req, res) => {
             const outName = name.replace(/\.pdf$/i, `_${Date.now()}.pdf`);
             const outPath = path.join(tmpDir, outName);
             await fs.writeFile(outPath, finalBytes);
-            outputs.push({ path: outPath, name: outName });
-            console.log('[FLOW] Listo', outPath);
+            const sendPath = await compressIfTooLarge(outPath);
+            outputs.push({ path: sendPath, name: path.basename(sendPath) });
+            console.log('[FLOW] Listo', sendPath);
           } catch (urlErr) {
             console.error('[FLOW] Error procesando', url, '-', urlErr?.message);
             continue;
