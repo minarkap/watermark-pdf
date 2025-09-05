@@ -45,7 +45,8 @@ app.post('/webhook', async (req, res) => {
     const allowedTitles = new Set([
       'Keto Optimizado',
       'OFERTA CURSO KETO OPTIMIZADO',
-      'CURSO KETO OPTIMIZADO (UPSELL KETOFAST)'
+      'CURSO KETO OPTIMIZADO (UPSELL KETOFAST)',
+      'Test Product'
     ]);
     const isKetoOptimizado = kajabiOfferTitle && allowedTitles.has(kajabiOfferTitle);
 
