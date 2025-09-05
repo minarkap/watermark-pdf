@@ -6,10 +6,10 @@ export async function addSecurityFeatures(pdfDoc, watermarkText, documentHash) {
   console.log("--- APLICANDO BANDA DE SEGURIDAD Y METADATOS (COMO IMAGEN) ---");
   
   const [fullName, email, timestamp] = watermarkText.split(' | ');
-  pdfDoc.setTitle('Analíticas Esenciales');
+  pdfDoc.setTitle('Keto Optimizado');
   pdfDoc.setAuthor('INTERGALACTIC SL');
   pdfDoc.setSubject(`Documento personal para ${fullName} (${email})`);
-  pdfDoc.setKeywords(['analiticas', 'esenciales', 'privado', fullName, email]);
+  pdfDoc.setKeywords(['Keto', 'Optimizado', 'privado', fullName, email]);
   pdfDoc.setProducer('Sistema de Watermarking v1.0');
   pdfDoc.setCreationDate(new Date(timestamp || Date.now()));
   pdfDoc.setModificationDate(new Date());
