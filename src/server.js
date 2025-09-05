@@ -13,7 +13,7 @@ import { promisify } from 'util';
 const exec = promisify(execCb);
 
 // Comprime un PDF si supera cierto umbral (bytes). Devuelve la ruta del archivo a usar finalmente.
-async function compressIfTooLarge(inputPath, maxBytes = 20 * 1024 * 1024) {
+async function compressIfTooLarge(inputPath, maxBytes = 17 * 1024 * 1024) {
   try {
     const stat = await fs.stat(inputPath);
     if (stat.size <= maxBytes) return inputPath;
