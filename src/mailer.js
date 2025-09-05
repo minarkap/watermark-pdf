@@ -29,8 +29,8 @@ export async function sendEmailWithAttachments({ to, subject, text, attachments 
     loaded.push({ name, contentType, buf });
   }
 
-  // Límite conservador de 20 MiB por mensaje (evita límites de destinatarios)
-  const MAX_BYTES = 20 * 1024 * 1024;
+  // Límite conservador de 17 MiB por mensaje (base64 añade ~33%, total ~22.6 MiB)
+  const MAX_BYTES = 17 * 1024 * 1024;
   const groups = [];
   let current = [];
   let acc = 0;
