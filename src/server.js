@@ -66,22 +66,27 @@ app.post('/webhook', async (req, res) => {
       if (pdfFiles.length > 0) {
         console.log(`[FLOW] PDFs locales detectados: ${pdfFiles.length}`);
         for (const pdfPath of pdfFiles) {
-          console.log('[FLOW] Procesando', pdfPath);
-          const bytes = await fs.readFile(pdfPath);
-          let pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
-          await applyCentralWatermark(pdfDoc, watermarkText);
-          const watermarkedBytes = await pdfDoc.save();
-          const documentHash = createHash('sha256').update(watermarkedBytes).digest('hex');
-          pdfDoc = await PDFDocument.load(watermarkedBytes);
-          await addSecurityFeatures(pdfDoc, watermarkText, documentHash);
-          const finalBytes = await pdfDoc.save();
-          const tmpDir = path.join(__dirname, '..', 'tmp');
-          await fs.mkdir(tmpDir, { recursive: true });
-          const outName = path.basename(pdfPath).replace(/\.pdf$/i, `_${Date.now()}.pdf`);
-          const outPath = path.join(tmpDir, outName);
-          await fs.writeFile(outPath, finalBytes);
-          outputs.push({ path: outPath, name: outName });
-          console.log('[FLOW] Listo', outPath);
+          try {
+            console.log('[FLOW] Procesando', pdfPath);
+            const bytes = await fs.readFile(pdfPath);
+            let pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
+            await applyCentralWatermark(pdfDoc, watermarkText);
+            const watermarkedBytes = await pdfDoc.save();
+            const documentHash = createHash('sha256').update(watermarkedBytes).digest('hex');
+            pdfDoc = await PDFDocument.load(watermarkedBytes);
+            await addSecurityFeatures(pdfDoc, watermarkText, documentHash);
+            const finalBytes = await pdfDoc.save();
+            const tmpDir = path.join(__dirname, '..', 'tmp');
+            await fs.mkdir(tmpDir, { recursive: true });
+            const outName = path.basename(pdfPath).replace(/\.pdf$/i, `_${Date.now()}.pdf`);
+            const outPath = path.join(tmpDir, outName);
+            await fs.writeFile(outPath, finalBytes);
+            outputs.push({ path: outPath, name: outName });
+            console.log('[FLOW] Listo', outPath);
+          } catch (fileErr) {
+            console.error('[FLOW] Error procesando', pdfPath, '-', fileErr?.message);
+            continue;
+          }
         }
       } else {
         const urlsJson = process.env.KETO_OPTIMIZADO_URLS;
@@ -111,21 +116,26 @@ app.post('/webhook', async (req, res) => {
             throw new Error(`Fallo al descargar ${url}: ${resp.status} ${resp.statusText}`);
           }
           const arrayBuffer = await resp.arrayBuffer();
-          const bytes = Buffer.from(arrayBuffer);
-          let pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
-          await applyCentralWatermark(pdfDoc, watermarkText);
-          const watermarkedBytes = await pdfDoc.save();
-          const documentHash = createHash('sha256').update(watermarkedBytes).digest('hex');
-          pdfDoc = await PDFDocument.load(watermarkedBytes);
-          await addSecurityFeatures(pdfDoc, watermarkText, documentHash);
-          const finalBytes = await pdfDoc.save();
-          const tmpDir = path.join(__dirname, '..', 'tmp');
-          await fs.mkdir(tmpDir, { recursive: true });
-          const outName = name.replace(/\.pdf$/i, `_${Date.now()}.pdf`);
-          const outPath = path.join(tmpDir, outName);
-          await fs.writeFile(outPath, finalBytes);
-          outputs.push({ path: outPath, name: outName });
-          console.log('[FLOW] Listo', outPath);
+          try {
+            const bytes = Buffer.from(arrayBuffer);
+            let pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
+            await applyCentralWatermark(pdfDoc, watermarkText);
+            const watermarkedBytes = await pdfDoc.save();
+            const documentHash = createHash('sha256').update(watermarkedBytes).digest('hex');
+            pdfDoc = await PDFDocument.load(watermarkedBytes);
+            await addSecurityFeatures(pdfDoc, watermarkText, documentHash);
+            const finalBytes = await pdfDoc.save();
+            const tmpDir = path.join(__dirname, '..', 'tmp');
+            await fs.mkdir(tmpDir, { recursive: true });
+            const outName = name.replace(/\.pdf$/i, `_${Date.now()}.pdf`);
+            const outPath = path.join(tmpDir, outName);
+            await fs.writeFile(outPath, finalBytes);
+            outputs.push({ path: outPath, name: outName });
+            console.log('[FLOW] Listo', outPath);
+          } catch (urlErr) {
+            console.error('[FLOW] Error procesando', url, '-', urlErr?.message);
+            continue;
+          }
         }
       }
     } else {
