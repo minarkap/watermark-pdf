@@ -11,6 +11,7 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     fontconfig \
     fonts-dejavu-core \
+    ghostscript \
   && fc-cache -f \
   && rm -rf /var/lib/apt/lists/*
 COPY --from=deps /usr/src/app/node_modules ./node_modules

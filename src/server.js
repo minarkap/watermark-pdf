@@ -8,6 +8,9 @@ import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
 import { PDFDocument } from 'pdf-lib';
 import { createHash } from 'crypto';
+import { exec as execCb } from 'child_process';
+import { promisify } from 'util';
+const exec = promisify(execCb);
 
 dotenv.config();
 console.log('Boot OK');
@@ -68,7 +71,18 @@ app.post('/webhook', async (req, res) => {
         for (const pdfPath of pdfFiles) {
           try {
             console.log('[FLOW] Procesando', pdfPath);
-            const bytes = await fs.readFile(pdfPath);
+            let bytes = await fs.readFile(pdfPath);
+            // Intento de saneado con Ghostscript
+            try {
+              const tmpDir = path.join(__dirname, '..', 'tmp');
+              await fs.mkdir(tmpDir, { recursive: true });
+              const sanitizedPath = path.join(tmpDir, `sanitized_${Date.now()}.pdf`);
+              await exec(`gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.6 -sOutputFile=${sanitizedPath} -f ${pdfPath} | cat`);
+              bytes = await fs.readFile(sanitizedPath);
+              console.log('[FLOW] PDF saneado con Ghostscript');
+            } catch (gsErr) {
+              console.log('[FLOW] Ghostscript falló o no era necesario:', gsErr?.message || gsErr);
+            }
             let pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
             await applyCentralWatermark(pdfDoc, watermarkText);
             const watermarkedBytes = await pdfDoc.save();
@@ -117,7 +131,20 @@ app.post('/webhook', async (req, res) => {
           }
           const arrayBuffer = await resp.arrayBuffer();
           try {
-            const bytes = Buffer.from(arrayBuffer);
+            let bytes = Buffer.from(arrayBuffer);
+            // Intento de saneado con Ghostscript vía archivo temporal
+            try {
+              const tmpDir = path.join(__dirname, '..', 'tmp');
+              await fs.mkdir(tmpDir, { recursive: true });
+              const dlPath = path.join(tmpDir, `download_${Date.now()}.pdf`);
+              const sanitizedPath = path.join(tmpDir, `sanitized_${Date.now()}.pdf`);
+              await fs.writeFile(dlPath, bytes);
+              await exec(`gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.6 -sOutputFile=${sanitizedPath} -f ${dlPath} | cat`);
+              bytes = await fs.readFile(sanitizedPath);
+              console.log('[FLOW] PDF descargado saneado con Ghostscript');
+            } catch (gsErr) {
+              console.log('[FLOW] Ghostscript falló o no era necesario (descarga):', gsErr?.message || gsErr);
+            }
             let pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
             await applyCentralWatermark(pdfDoc, watermarkText);
             const watermarkedBytes = await pdfDoc.save();
