@@ -68,7 +68,7 @@ app.post('/webhook', async (req, res) => {
         for (const pdfPath of pdfFiles) {
           console.log('[FLOW] Procesando', pdfPath);
           const bytes = await fs.readFile(pdfPath);
-          let pdfDoc = await PDFDocument.load(bytes);
+          let pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
           await applyCentralWatermark(pdfDoc, watermarkText);
           const watermarkedBytes = await pdfDoc.save();
           const documentHash = createHash('sha256').update(watermarkedBytes).digest('hex');
@@ -112,7 +112,7 @@ app.post('/webhook', async (req, res) => {
           }
           const arrayBuffer = await resp.arrayBuffer();
           const bytes = Buffer.from(arrayBuffer);
-          let pdfDoc = await PDFDocument.load(bytes);
+          let pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
           await applyCentralWatermark(pdfDoc, watermarkText);
           const watermarkedBytes = await pdfDoc.save();
           const documentHash = createHash('sha256').update(watermarkedBytes).digest('hex');
