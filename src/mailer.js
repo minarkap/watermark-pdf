@@ -17,12 +17,9 @@ const oAuth2Client = new google.auth.OAuth2(
 
 oAuth2Client.setCredentials({ refresh_token: GMAIL_REFRESH_TOKEN });
 
-export async function sendEmailWithAttachment({ to, subject, text, attachmentPath, attachmentName }) {
-  console.log(`[MAIL] Preparando envío a ${to} via Gmail API`);
+export async function sendEmailWithAttachments({ to, subject, text, attachments }) {
+  console.log(`[MAIL] Preparando envío a ${to} via Gmail API con ${attachments.length} adjuntos`);
   const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
-
-  const attachment = await fs.readFile(attachmentPath);
-  console.log(`[MAIL] Adjunto leído (${attachment.length} bytes)`);
 
   const boundary = 'mixed_' + Date.now();
   const messageParts = [
@@ -37,15 +34,23 @@ export async function sendEmailWithAttachment({ to, subject, text, attachmentPat
     'Content-Transfer-Encoding: 7bit',
     '',
     text,
-    '',
-    `--${boundary}`,
-    `Content-Type: application/pdf; name="${attachmentName}"`,
-    'Content-Transfer-Encoding: base64',
-    `Content-Disposition: attachment; filename="${attachmentName}"`,
-    '',
-    attachment.toString('base64'),
-    `--${boundary}--`,
   ];
+
+  for (const { path: filePath, name, contentType = 'application/pdf' } of attachments) {
+    const fileBuf = await fs.readFile(filePath);
+    console.log(`[MAIL] Adjunto leído ${name} (${fileBuf.length} bytes)`);
+    messageParts.push(
+      '',
+      `--${boundary}`,
+      `Content-Type: ${contentType}; name="${name}"`,
+      'Content-Transfer-Encoding: base64',
+      `Content-Disposition: attachment; filename="${name}"`,
+      '',
+      fileBuf.toString('base64'),
+    );
+  }
+
+  messageParts.push(`--${boundary}--`);
 
   const rawMessage = messageParts.join('\r\n');
   const encodedMessage = Buffer.from(rawMessage)
@@ -60,4 +65,14 @@ export async function sendEmailWithAttachment({ to, subject, text, attachmentPat
     requestBody: { raw: encodedMessage },
   });
   console.log('[MAIL] Correo enviado via Gmail API');
+}
+
+// Compat: wrapper para una sola pieza
+export async function sendEmailWithAttachment({ to, subject, text, attachmentPath, attachmentName }) {
+  return sendEmailWithAttachments({
+    to,
+    subject,
+    text,
+    attachments: [{ path: attachmentPath, name: attachmentName }],
+  });
 }
