@@ -10,14 +10,15 @@ import { PDFDocument } from 'pdf-lib';
 import { createHash } from 'crypto';
 import { exec as execCb } from 'child_process';
 import { promisify } from 'util';
-import IORedis from 'ioredis';
 import { Queue, Worker } from 'bullmq';
 const exec = promisify(execCb);
 
 // Cola en Redis (BullMQ)
 const REDIS_URL = process.env.REDIS_URL || process.env.UPSTASH_REDIS_REST_URL || '';
-const redis = REDIS_URL ? new IORedis(REDIS_URL) : null;
-const pdfQueue = redis ? new Queue('pdf-jobs', { connection: redis }) : null;
+const connection = REDIS_URL
+  ? { url: REDIS_URL, maxRetriesPerRequest: null, enableReadyCheck: false }
+  : null;
+const pdfQueue = connection ? new Queue('pdf-jobs', { connection }) : null;
 
 // Comprime un PDF si supera cierto umbral (bytes). Devuelve la ruta del archivo a usar finalmente.
 async function compressIfTooLarge(inputPath, maxBytes = 17 * 1024 * 1024) {
@@ -427,7 +428,7 @@ if (pdfQueue) {
       });
       console.log('[FLOW] Email enviado');
     },
-    { connection: redis, concurrency: 1 }
+    { connection, concurrency: 1 }
   );
 }
 
