@@ -18,6 +18,7 @@ export async function addSecurityFeatures(pdfDoc, watermarkText, documentHash) {
   for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
     const page = pages[pageIndex];
     const { width, height } = page.getSize();
+    const rotation = page.getRotation()?.angle || 0;
     const bandHeight = 36;
 
     const line1 = "Documento encriptado y firmado electrónicamente. Datos guardados y trazados.";
@@ -51,12 +52,25 @@ export async function addSecurityFeatures(pdfDoc, watermarkText, documentHash) {
       const bandImage = await pdfDoc.embedPng(bandPngBuffer);
       console.log(`[SECURITY] Banda embebida en PDF`);
 
-      page.drawImage(bandImage, {
-        x: 0,
-        y: height - bandHeight,
-        width: width,
-        height: bandHeight,
-      });
+      // Ajuste de colocación con rotación de página
+      if (rotation % 180 === 0) {
+        page.drawImage(bandImage, {
+          x: 0,
+          y: height - bandHeight,
+          width: width,
+          height: bandHeight,
+        });
+      } else {
+        // Rotado 90/270: intercambiar ejes
+        const x = width - bandHeight;
+        const y = 0;
+        page.drawImage(bandImage, {
+          x,
+          y,
+          width: bandHeight,
+          height: width,
+        });
+      }
       console.log(`[SECURITY] Banda dibujada en página ${pageIndex + 1}`);
     } catch (err) {
       console.error(`[SECURITY] Error al generar/embeber banda en página ${pageIndex + 1}:`, err?.message);

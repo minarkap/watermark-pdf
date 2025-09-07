@@ -12,6 +12,7 @@ RUN apt-get update \
     fontconfig \
     fonts-dejavu-core \
     ghostscript \
+    qpdf \
   && fc-cache -f \
   && rm -rf /var/lib/apt/lists/*
 COPY --from=deps /usr/src/app/node_modules ./node_modules

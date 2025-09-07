@@ -12,6 +12,23 @@ import { exec as execCb } from 'child_process';
 import { promisify } from 'util';
 const exec = promisify(execCb);
 
+// Cola en memoria para procesar trabajos secuencialmente
+const jobQueue = [];
+let isProcessing = false;
+async function processQueue() {
+  if (isProcessing) return;
+  isProcessing = true;
+  while (jobQueue.length) {
+    const job = jobQueue.shift();
+    try {
+      await job();
+    } catch (e) {
+      console.error('[QUEUE] Error en job:', e?.message);
+    }
+  }
+  isProcessing = false;
+}
+
 // Comprime un PDF si supera cierto umbral (bytes). Devuelve la ruta del archivo a usar finalmente.
 async function compressIfTooLarge(inputPath, maxBytes = 17 * 1024 * 1024) {
   try {
@@ -32,6 +49,23 @@ async function compressIfTooLarge(inputPath, maxBytes = 17 * 1024 * 1024) {
   } catch (e) {
     console.log('[FLOW] Compresión omitida por error:', e?.message || e);
     return inputPath;
+  }
+}
+
+// Normaliza bytes de PDF copiando todas las páginas a un nuevo documento
+async function normalizeWithPdfLib(bytes) {
+  try {
+    const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
+    const out = await PDFDocument.create();
+    const indices = src.getPages().map((_, idx) => idx);
+    const copied = await out.copyPages(src, indices);
+    for (const p of copied) out.addPage(p);
+    const normalized = await out.save();
+    console.log('[FLOW] PDF normalizado con pdf-lib');
+    return normalized;
+  } catch (e) {
+    console.log('[FLOW] Normalización pdf-lib omitida:', e?.message || e);
+    return bytes;
   }
 }
 
@@ -56,15 +90,16 @@ app.post('/webhook', async (req, res) => {
   const fullName = body?.member?.name || (body?.member?.first_name && body?.member?.last_name ? `${body.member.first_name} ${body.member.last_name}` : body?.fullName);
   const email = body?.member?.email || body?.email;
   const purchasedAt = body?.payment_transaction?.created_at || body?.purchasedAt;
-  if (!fullName || !email) {
-    return res.status(400).json({ error: 'Faltan parámetros: fullName y email son requeridos' });
-  }
+    if (!fullName || !email) {
+      return res.status(400).json({ error: 'Faltan parámetros: fullName y email son requeridos' });
+    }
 
   // Responder inmediatamente
   res.json({ ok: true, message: "Procesando en segundo plano." });
 
-  // --- Ejecutar el resto en segundo plano ---
-  try {
+  // --- Encolar el trabajo en segundo plano (procesamiento secuencial) ---
+  const job = async () => {
+    try {
     const timestamp = purchasedAt || new Date().toISOString();
     const watermarkText = `${fullName} | ${email} | ${timestamp}`;
 
@@ -106,6 +141,19 @@ app.post('/webhook', async (req, res) => {
             } catch (gsErr) {
               console.log('[FLOW] Ghostscript falló o no era necesario:', gsErr?.message || gsErr);
             }
+            // Saneado adicional con qpdf (linealizar y reparar)
+            try {
+              const tmpDir = path.join(__dirname, '..', 'tmp');
+              const qpdfIn = path.join(tmpDir, `qpdf_in_${Date.now()}.pdf`);
+              const qpdfOut = path.join(tmpDir, `qpdf_out_${Date.now()}.pdf`);
+              await fs.writeFile(qpdfIn, bytes);
+              await exec(`qpdf --linearize --stream-data=preserve --recompress-flate --object-streams=preserve --qdf ${qpdfIn} ${qpdfOut} | cat`);
+              bytes = await fs.readFile(qpdfOut);
+              console.log('[FLOW] PDF saneado con qpdf');
+            } catch (qErr) {
+              console.log('[FLOW] qpdf falló o no era necesario:', qErr?.message || qErr);
+            }
+            bytes = await normalizeWithPdfLib(bytes);
             let pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
             await applyCentralWatermark(pdfDoc, watermarkText);
             const watermarkedBytes = await pdfDoc.save();
@@ -169,6 +217,19 @@ app.post('/webhook', async (req, res) => {
             } catch (gsErr) {
               console.log('[FLOW] Ghostscript falló o no era necesario (descarga):', gsErr?.message || gsErr);
             }
+            // Saneado adicional con qpdf
+            try {
+              const tmpDir = path.join(__dirname, '..', 'tmp');
+              const qpdfIn = path.join(tmpDir, `qpdf_in_${Date.now()}.pdf`);
+              const qpdfOut = path.join(tmpDir, `qpdf_out_${Date.now()}.pdf`);
+              await fs.writeFile(qpdfIn, bytes);
+              await exec(`qpdf --linearize --stream-data=preserve --recompress-flate --object-streams=preserve --qdf ${qpdfIn} ${qpdfOut} | cat`);
+              bytes = await fs.readFile(qpdfOut);
+              console.log('[FLOW] PDF (descarga) saneado con qpdf');
+            } catch (qErr) {
+              console.log('[FLOW] qpdf (descarga) falló o no era necesario:', qErr?.message || qErr);
+            }
+            bytes = await normalizeWithPdfLib(bytes);
             let pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
             await applyCentralWatermark(pdfDoc, watermarkText);
             const watermarkedBytes = await pdfDoc.save();
@@ -176,8 +237,8 @@ app.post('/webhook', async (req, res) => {
             pdfDoc = await PDFDocument.load(watermarkedBytes);
             await addSecurityFeatures(pdfDoc, watermarkText, documentHash);
             const finalBytes = await pdfDoc.save();
-            const tmpDir = path.join(__dirname, '..', 'tmp');
-            await fs.mkdir(tmpDir, { recursive: true });
+    const tmpDir = path.join(__dirname, '..', 'tmp');
+    await fs.mkdir(tmpDir, { recursive: true });
             const outName = name.replace(/\.pdf$/i, `_${Date.now()}.pdf`);
             const outPath = path.join(tmpDir, outName);
             await fs.writeFile(outPath, finalBytes);
@@ -208,11 +269,14 @@ app.post('/webhook', async (req, res) => {
     console.log(`Proceso completado para ${email}`);
 
   } catch (err) {
-    console.error(`--- ERROR FATAL EN SEGUNDO PLANO PARA ${email} ---`);
-    console.error("Mensaje:", err.message);
-    console.error("Stack:", err.stack);
-    console.error("--- FIN DEL ERROR FATAL ---");
-  }
+      console.error(`--- ERROR FATAL EN SEGUNDO PLANO PARA ${email} ---`);
+      console.error("Mensaje:", err.message);
+      console.error("Stack:", err.stack);
+      console.error("--- FIN DEL ERROR FATAL ---");
+    }
+  };
+  jobQueue.push(job);
+  processQueue();
 });
 
 const PORT = process.env.PORT || 3000;
