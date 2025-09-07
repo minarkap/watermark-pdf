@@ -40,7 +40,7 @@ export async function applyCentralWatermark(pdfDoc, watermarkText) {
         y: centerY - (drawHeight / 2),
         width: drawWidth,
         height: drawHeight,
-        opacity: 0.5,
+        opacity: 0.35,
       });
       // log mínimo por página
     } catch (err) {
