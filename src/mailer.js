@@ -37,6 +37,7 @@ export async function sendEmailWithAttachments({ to, subject, text, attachments,
     const body = `¡Hola, ${safeFirst}!\n\nMuchísimas gracias por tu confianza :)\n¡Ahora empieza tu cambio!\n\nAquí tienes tu PDF ${prettyName}.\n\nGuarda bien esta guía en tu móvil, ordenador o imprímela. Tenla siempre a mano para que puedas acceder a ella fácilmente y consigas tus objetivos.\n¡Es tu mapa único de transformación!\n\nUn abrazo intergaláctico 🪐\nPhil.`;
 
     const boundary = 'mixed_' + Date.now() + '_' + idx;
+    const altBoundary = 'alt_' + Date.now() + '_' + idx;
     const parts = [
       `From: ${encodeHeader('Phil Hugo')} <${GMAIL_SENDER}>`,
       `To: ${to}`,
@@ -45,10 +46,27 @@ export async function sendEmailWithAttachments({ to, subject, text, attachments,
       `Content-Type: multipart/mixed; boundary=${boundary}`,
       '',
       `--${boundary}`,
+      `Content-Type: multipart/alternative; boundary=${altBoundary}`,
+      '',
+      `--${altBoundary}`,
       'Content-Type: text/plain; charset="UTF-8"',
       'Content-Transfer-Encoding: 8bit',
       '',
       body,
+      '',
+      `--${altBoundary}`,
+      'Content-Type: text/html; charset="UTF-8"',
+      'Content-Transfer-Encoding: 8bit',
+      '',
+      `<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;white-space:normal;line-height:1.5;font-size:14px;color:#111">`
+        + `<p>¡Hola, ${safeFirst}!</p>`
+        + `<p>Muchísimas gracias por tu confianza :)<br/>¡Ahora empieza tu cambio!</p>`
+        + `<p>Aquí tienes tu PDF ${prettyName}.</p>`
+        + `<p>Guarda bien esta guía en tu móvil, ordenador o imprímela. Tenla siempre a mano para que puedas acceder a ella fácilmente y consigas tus objetivos. ¡Es tu mapa único de transformación!</p>`
+        + `<p>Un abrazo intergaláctico 🪐<br/>Phil.</p>`
+      + `</div>`,
+      '',
+      `--${altBoundary}--`,
       '',
       `--${boundary}`,
       `Content-Type: ${contentType}; name="${name}"`,
