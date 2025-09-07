@@ -21,7 +21,7 @@ export async function applyCentralWatermark(pdfDoc, watermarkText) {
 
   // Renderizar una sola vez y reutilizar en todas las páginas; paletizar para reducir tamaño
   const pngBuffer = await sharp(Buffer.from(svg))
-    .png({ palette: true, compressionLevel: 9, effort: 6 })
+    .png({ palette: true, compressionLevel: 8, effort: 5 })
     .toBuffer();
   const wmImage = await pdfDoc.embedPng(pngBuffer);
 

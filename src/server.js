@@ -53,18 +53,20 @@ async function compressIfTooLarge(inputPath, maxBytes = 17 * 1024 * 1024) {
 }
 
 // Normaliza bytes de PDF copiando todas las páginas a un nuevo documento
+const normalizeCache = new Map(); // hash(bytes)->bytes normalizados
 async function normalizeWithPdfLib(bytes) {
   try {
+    const hash = createHash('sha256').update(bytes).digest('hex');
+    if (normalizeCache.has(hash)) return normalizeCache.get(hash);
     const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
     const out = await PDFDocument.create();
     const indices = src.getPages().map((_, idx) => idx);
     const copied = await out.copyPages(src, indices);
     for (const p of copied) out.addPage(p);
     const normalized = await out.save();
-    console.log('[FLOW] PDF normalizado con pdf-lib');
+    normalizeCache.set(hash, normalized);
     return normalized;
   } catch (e) {
-    console.log('[FLOW] Normalización pdf-lib omitida:', e?.message || e);
     return bytes;
   }
 }
@@ -189,27 +191,25 @@ app.post('/webhook', async (req, res) => {
             console.log('[FLOW] Procesando', pdfPath);
             let bytes = await fs.readFile(pdfPath);
             // Intento de saneado con Ghostscript
-            try {
-              const tmpDir = path.join(__dirname, '..', 'tmp');
-              await fs.mkdir(tmpDir, { recursive: true });
-              const sanitizedPath = path.join(tmpDir, `sanitized_${Date.now()}.pdf`);
-              await exec(`gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.6 -sOutputFile=${sanitizedPath} -f ${pdfPath} | cat`);
-              bytes = await fs.readFile(sanitizedPath);
-              // gs ok
-            } catch (gsErr) {
-              console.log('[FLOW] Ghostscript falló o no era necesario:', gsErr?.message || gsErr);
+            if (process.env.ENABLE_GS !== 'false') {
+              try {
+                const tmpDir = path.join(__dirname, '..', 'tmp');
+                await fs.mkdir(tmpDir, { recursive: true });
+                const sanitizedPath = path.join(tmpDir, `sanitized_${Date.now()}.pdf`);
+                await exec(`gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.6 -sOutputFile=${sanitizedPath} -f ${pdfPath} | cat`);
+                bytes = await fs.readFile(sanitizedPath);
+              } catch {}
             }
             // Saneado adicional con qpdf (linealizar y reparar)
-            try {
-              const tmpDir = path.join(__dirname, '..', 'tmp');
-              const qpdfIn = path.join(tmpDir, `qpdf_in_${Date.now()}.pdf`);
-              const qpdfOut = path.join(tmpDir, `qpdf_out_${Date.now()}.pdf`);
-              await fs.writeFile(qpdfIn, bytes);
-              await exec(`qpdf --linearize --stream-data=preserve --recompress-flate --object-streams=preserve --qdf ${qpdfIn} ${qpdfOut} | cat`);
-              bytes = await fs.readFile(qpdfOut);
-              // qpdf ok
-            } catch (qErr) {
-              console.log('[FLOW] qpdf falló o no era necesario:', qErr?.message || qErr);
+            if (process.env.ENABLE_QPDF !== 'false') {
+              try {
+                const tmpDir = path.join(__dirname, '..', 'tmp');
+                const qpdfIn = path.join(tmpDir, `qpdf_in_${Date.now()}.pdf`);
+                const qpdfOut = path.join(tmpDir, `qpdf_out_${Date.now()}.pdf`);
+                await fs.writeFile(qpdfIn, bytes);
+                await exec(`qpdf --linearize --stream-data=preserve --recompress-flate --object-streams=preserve --qdf ${qpdfIn} ${qpdfOut} | cat`);
+                bytes = await fs.readFile(qpdfOut);
+              } catch {}
             }
             bytes = await normalizeWithPdfLib(bytes);
             let pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
@@ -263,29 +263,27 @@ app.post('/webhook', async (req, res) => {
           try {
             let bytes = Buffer.from(arrayBuffer);
             // Intento de saneado con Ghostscript vía archivo temporal
-            try {
-              const tmpDir = path.join(__dirname, '..', 'tmp');
-              await fs.mkdir(tmpDir, { recursive: true });
-              const dlPath = path.join(tmpDir, `download_${Date.now()}.pdf`);
-              const sanitizedPath = path.join(tmpDir, `sanitized_${Date.now()}.pdf`);
-              await fs.writeFile(dlPath, bytes);
-              await exec(`gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.6 -sOutputFile=${sanitizedPath} -f ${dlPath} | cat`);
-              bytes = await fs.readFile(sanitizedPath);
-              // gs ok descarga
-            } catch (gsErr) {
-              console.log('[FLOW] Ghostscript falló o no era necesario (descarga):', gsErr?.message || gsErr);
+            if (process.env.ENABLE_GS !== 'false') {
+              try {
+                const tmpDir = path.join(__dirname, '..', 'tmp');
+                await fs.mkdir(tmpDir, { recursive: true });
+                const dlPath = path.join(tmpDir, `download_${Date.now()}.pdf`);
+                const sanitizedPath = path.join(tmpDir, `sanitized_${Date.now()}.pdf`);
+                await fs.writeFile(dlPath, bytes);
+                await exec(`gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.6 -sOutputFile=${sanitizedPath} -f ${dlPath} | cat`);
+                bytes = await fs.readFile(sanitizedPath);
+              } catch {}
             }
             // Saneado adicional con qpdf
-            try {
-              const tmpDir = path.join(__dirname, '..', 'tmp');
-              const qpdfIn = path.join(tmpDir, `qpdf_in_${Date.now()}.pdf`);
-              const qpdfOut = path.join(tmpDir, `qpdf_out_${Date.now()}.pdf`);
-              await fs.writeFile(qpdfIn, bytes);
-              await exec(`qpdf --linearize --stream-data=preserve --recompress-flate --object-streams=preserve --qdf ${qpdfIn} ${qpdfOut} | cat`);
-              bytes = await fs.readFile(qpdfOut);
-              // qpdf ok descarga
-            } catch (qErr) {
-              console.log('[FLOW] qpdf (descarga) falló o no era necesario:', qErr?.message || qErr);
+            if (process.env.ENABLE_QPDF !== 'false') {
+              try {
+                const tmpDir = path.join(__dirname, '..', 'tmp');
+                const qpdfIn = path.join(tmpDir, `qpdf_in_${Date.now()}.pdf`);
+                const qpdfOut = path.join(tmpDir, `qpdf_out_${Date.now()}.pdf`);
+                await fs.writeFile(qpdfIn, bytes);
+                await exec(`qpdf --linearize --stream-data=preserve --recompress-flate --object-streams=preserve --qdf ${qpdfIn} ${qpdfOut} | cat`);
+                bytes = await fs.readFile(qpdfOut);
+              } catch {}
             }
             bytes = await normalizeWithPdfLib(bytes);
             let pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });

@@ -45,7 +45,7 @@ export async function addSecurityFeatures(pdfDoc, watermarkText, documentHash) {
       </svg>
     `;
 
-    const dpi = 300; // Alta resolución para mejor nitidez
+    const dpi = Number(process.env.BANNER_DPI || 200); // Ajustable por env
     try {
       // log mínimo por página
       const bandPngBuffer = await sharp(Buffer.from(bandSvg), { density: dpi })
