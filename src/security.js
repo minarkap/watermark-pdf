@@ -47,7 +47,9 @@ export async function addSecurityFeatures(pdfDoc, watermarkText, documentHash) {
     const dpi = 300; // Alta resolución para mejor nitidez
     try {
       console.log(`[SECURITY] Renderizando banda (página ${pageIndex + 1}/${pages.length}) @ ${dpi} DPI`);
-      const bandPngBuffer = await sharp(Buffer.from(bandSvg), { density: dpi }).png().toBuffer();
+      const bandPngBuffer = await sharp(Buffer.from(bandSvg), { density: dpi })
+        .png({ palette: true, compressionLevel: 9, effort: 6 })
+        .toBuffer();
       console.log(`[SECURITY] Banda renderizada (${bandPngBuffer.length} bytes)`);
       const bandImage = await pdfDoc.embedPng(bandPngBuffer);
       console.log(`[SECURITY] Banda embebida en PDF`);
