@@ -2,7 +2,8 @@
 FROM node:18-slim AS deps
 WORKDIR /usr/src/app
 COPY package.json package-lock.json ./
-RUN npm ci --only=production
+# Usar npm install para evitar fallo por lock desincronizado en CI
+RUN npm install --omit=dev --no-audit --no-fund
 
 # Etapa de producción
 FROM node:18-slim AS runner
