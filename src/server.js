@@ -14,11 +14,19 @@ import { Queue, Worker } from 'bullmq';
 const exec = promisify(execCb);
 
 // Cola en Redis (BullMQ)
-const REDIS_URL = process.env.REDIS_URL || process.env.UPSTASH_REDIS_REST_URL || '';
-const connection = REDIS_URL
-  ? { url: REDIS_URL, maxRetriesPerRequest: null, enableReadyCheck: false }
-  : null;
-const pdfQueue = connection ? new Queue('pdf-jobs', { connection }) : null;
+const REDIS_URL = process.env.REDIS_URL || process.env.UPSTASH_REDIS_URL || '';
+let connection = null;
+let pdfQueue = null;
+if (REDIS_URL) {
+  connection = { url: REDIS_URL, maxRetriesPerRequest: null, enableReadyCheck: false };
+  try {
+    pdfQueue = new Queue('pdf-jobs', { connection });
+  } catch (e) {
+    console.warn('[QUEUE] No se pudo inicializar Redis/BullMQ, usando fallback inline:', e?.message);
+    pdfQueue = null;
+    connection = null;
+  }
+}
 
 // Comprime un PDF si supera cierto umbral (bytes). Devuelve la ruta del archivo a usar finalmente.
 async function compressIfTooLarge(inputPath, maxBytes = 17 * 1024 * 1024) {
@@ -285,11 +293,12 @@ app.post('/webhook', async (req, res) => {
 });
 
 // Worker (si hay Redis) – procesa en el mismo contenedor
-if (pdfQueue) {
-  // eslint-disable-next-line no-new
-  new Worker(
-    'pdf-jobs',
-    async (job) => {
+if (pdfQueue && connection) {
+  try {
+    // eslint-disable-next-line no-new
+    new Worker(
+      'pdf-jobs',
+      async (job) => {
       const { fullName, email, purchasedAt, kajabiOfferTitle } = job.data || {};
       const timestamp = purchasedAt || new Date().toISOString();
       const watermarkText = `${fullName} | ${email} | ${timestamp}`;
@@ -419,17 +428,20 @@ if (pdfQueue) {
         return;
       }
 
-      console.log('[FLOW] Enviando email...');
-      await sendEmailWithAttachments({
-        to: email,
-        subject: 'Tu material personalizado',
-        text: 'Adjuntamos tus descargables personalizados.',
-        attachments: outputs,
-      });
-      console.log('[FLOW] Email enviado');
-    },
-    { connection, concurrency: 1 }
-  );
+        console.log('[FLOW] Enviando email...');
+        await sendEmailWithAttachments({
+          to: email,
+          subject: 'Tu material personalizado',
+          text: 'Adjuntamos tus descargables personalizados.',
+          attachments: outputs,
+        });
+        console.log('[FLOW] Email enviado');
+      },
+      { connection, concurrency: 1 }
+    );
+  } catch (e) {
+    console.warn('[QUEUE] Worker no iniciado, usando fallback inline:', e?.message);
+  }
 }
 
 const PORT = process.env.PORT || 3000;
