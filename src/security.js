@@ -15,6 +15,7 @@ export async function addSecurityFeatures(pdfDoc, watermarkText, documentHash) {
   pdfDoc.setModificationDate(new Date());
 
   const pages = pdfDoc.getPages();
+  let drawnCount = 0;
   for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
     const page = pages[pageIndex];
     const { width, height } = page.getSize();
@@ -71,10 +72,15 @@ export async function addSecurityFeatures(pdfDoc, watermarkText, documentHash) {
           height: width,
         });
       }
-      console.log(`[SECURITY] Banda dibujada en página ${pageIndex + 1}`);
+      drawnCount += 1;
     } catch (err) {
       console.error(`[SECURITY] Error al generar/embeber banda en página ${pageIndex + 1}:`, err?.message);
       throw err;
     }
+  }
+  if (drawnCount === pages.length) {
+    console.log(`[SECURITY] Banda aplicada en ${drawnCount}/${pages.length} páginas`);
+  } else {
+    console.warn(`[SECURITY] Banda faltó en ${pages.length - drawnCount} de ${pages.length} páginas`);
   }
 }
