@@ -30,8 +30,8 @@ export async function sendEmailWithAttachments({ to, subject, text, attachments,
     const baseName = (name || 'Descargable').replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '');
     const prettyName = baseName.replace(/_/g, ' ');
     const safeFirst = (firstName || '').trim() || 'intergaláctic@';
-    const finalSubject = `${prettyName}`;
-    const body = `¡Hola ${safeFirst}!\n\nMuchísimas gracias por tu confianza :)\n\nAquí empieza tu cambio.\n\nAquí tienes tu PDF ${prettyName}.\n\nGuarda bien esta guía en tu móvil, ordenador o imprímela. Tenla siempre a mano para que puedas acceder a ella fácilmente y consigas tus objetivos. Es tu mapa único de transformación.\n\nUn abrazo intergaláctico 🪐\nPhil.`;
+    const finalSubject = `¡Hola ${safeFirst}!\n\nMuchísimas gracias por tu confianza :)\n¡Ahora empieza tu cambio!\n\nAquí tienes tu PDF ${prettyName}\n\nGuarda bien esta guía en tu móvil, ordenador o imprímela. Tenla\nsiempre a mano para que puedas acceder a ella fácilmente y consigas\ntus objetivos. ¡Es tu mapa único de transformación!\n\nUn abrazo intergaláctico 🪐\nPhil.`;
+    const body = finalSubject;
 
     const boundary = 'mixed_' + Date.now() + '_' + idx;
     const parts = [
