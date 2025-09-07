@@ -11,6 +11,7 @@ import { createHash } from 'crypto';
 import { exec as execCb } from 'child_process';
 import { promisify } from 'util';
 import { Queue, Worker } from 'bullmq';
+import Ajv from 'ajv';
 const exec = promisify(execCb);
 
 // Cola en Redis (BullMQ)
@@ -77,6 +78,42 @@ const __dirname = path.dirname(__filename);
 const app = express();
 app.use(express.json({ limit: '2mb' }));
 
+// Validación de esquema del webhook (básico)
+const ajv = new Ajv({ removeAdditional: true, allErrors: true });
+const directSchema = {
+  type: 'object',
+  properties: {
+    fullName: { type: 'string', minLength: 1 },
+    email: { type: 'string', minLength: 3 },
+    purchasedAt: { type: 'string' }
+  },
+  required: ['fullName', 'email'],
+};
+const kajabiSchema = {
+  type: 'object',
+  properties: {
+    offer: {
+      type: 'object',
+      properties: { title: { type: 'string' } },
+    },
+    member: {
+      type: 'object',
+      properties: {
+        email: { type: 'string' },
+        name: { type: 'string' },
+        first_name: { type: 'string' },
+        last_name: { type: 'string' },
+      },
+    },
+    payment_transaction: {
+      type: 'object',
+      properties: { created_at: { type: 'string' } },
+    },
+  },
+};
+const validateDirect = ajv.compile(directSchema);
+const validateKajabi = ajv.compile(kajabiSchema);
+
 app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
@@ -85,6 +122,13 @@ app.post('/webhook', async (req, res) => {
   // Soportar payload de Kajabi: puede venir como array de eventos
   const bodyRaw = req.body || {};
   const body = Array.isArray(bodyRaw) ? (bodyRaw[0] || {}) : bodyRaw;
+  if (Array.isArray(bodyRaw)) {
+    if (!validateKajabi(body)) return res.status(400).json({ error: 'Payload Kajabi inválido' });
+  } else {
+    if (!validateDirect(bodyRaw) && !validateKajabi(bodyRaw)) {
+      return res.status(400).json({ error: 'Payload inválido' });
+    }
+  }
   const kajabiOfferTitle = body?.offer?.title;
   const fullName = body?.member?.name || (body?.member?.first_name && body?.member?.last_name ? `${body.member.first_name} ${body.member.last_name}` : body?.fullName);
   const email = body?.member?.email || body?.email;
@@ -448,5 +492,15 @@ const PORT = process.env.PORT || 3000;
 console.log('Binding on PORT=', PORT);
 app.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
+});
+
+// Endpoint de health extendido (cola)
+app.get('/healthz', async (_req, res) => {
+  try {
+    const queueOk = !!pdfQueue;
+    res.json({ ok: true, queue: queueOk });
+  } catch {
+    res.json({ ok: true, queue: false });
+  }
 });
 

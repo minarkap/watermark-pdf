@@ -20,7 +20,8 @@
     "pdf-lib": "^1.17.1",
     "sharp": "^0.34.3",
     "bullmq": "^5.7.1",
-    "ioredis": "^5.4.1"
+    "ioredis": "^5.4.1",
+    "ajv": "^8.12.0"
   },
   "type": "module"
 }
