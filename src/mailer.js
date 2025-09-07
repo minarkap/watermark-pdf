@@ -21,6 +21,8 @@ export async function sendEmailWithAttachments({ to, subject, text, attachments,
   console.log(`[MAIL] Envío a ${to} con ${attachments.length} adj.`);
   const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
 
+  const encodeHeader = (s) => `=?UTF-8?B?${Buffer.from(s, 'utf8').toString('base64')}?=`;
+
   // Enviar un email por adjunto para personalizar asunto/cuerpo
   let idx = 0;
   for (const { path: filePath, name, contentType = 'application/pdf' } of attachments) {
@@ -30,14 +32,15 @@ export async function sendEmailWithAttachments({ to, subject, text, attachments,
     const baseName = (name || 'Descargable').replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '');
     const prettyName = baseName.replace(/_/g, ' ');
     const safeFirst = (firstName || '').trim() || 'intergaláctic@';
-    const finalSubject = `¡Hola ${safeFirst}!\n\nMuchísimas gracias por tu confianza :)\n¡Ahora empieza tu cambio!\n\nAquí tienes tu PDF ${prettyName}\n\nGuarda bien esta guía en tu móvil, ordenador o imprímela. Tenla\nsiempre a mano para que puedas acceder a ella fácilmente y consigas\ntus objetivos. ¡Es tu mapa único de transformación!\n\nUn abrazo intergaláctico 🪐\nPhil.`;
-    const body = finalSubject;
+    // Asunto debe ser UNA línea
+    const finalSubject = prettyName;
+    const body = `¡Hola ${safeFirst}!\n\nMuchísimas gracias por tu confianza :)\n¡Ahora empieza tu cambio!\n\nAquí tienes tu PDF ${prettyName}.\n\nGuarda bien esta guía en tu móvil, ordenador o imprímela. Tenla\nsiempre a mano para que puedas acceder a ella fácilmente y consigas\ntus objetivos. ¡Es tu mapa único de transformación!\n\nUn abrazo intergaláctico 🪐\nPhil.`;
 
     const boundary = 'mixed_' + Date.now() + '_' + idx;
     const parts = [
-      `From: Phil Hugo <${GMAIL_SENDER}>`,
+      `From: ${encodeHeader('Phil Hugo')} <${GMAIL_SENDER}>`,
       `To: ${to}`,
-      `Subject: ${finalSubject}`,
+      `Subject: ${encodeHeader(finalSubject)}`,
       'MIME-Version: 1.0',
       `Content-Type: multipart/mixed; boundary=${boundary}`,
       '',
