@@ -21,77 +21,52 @@ export async function sendEmailWithAttachments({ to, subject, text, attachments 
   console.log(`[MAIL] Envío a ${to} con ${attachments.length} adj.`);
   const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
 
-  // Pre-cargar buffers y tamaños
-  const loaded = [];
-  for (const { path: filePath, name, contentType = 'application/pdf' } of attachments) {
-    const buf = await fs.readFile(filePath);
-    console.log(`[MAIL] Adjunto leído ${name} (${buf.length} bytes)`);
-    loaded.push({ name, contentType, buf });
-  }
-
-  // Límite conservador de 17 MiB por mensaje (base64 añade ~33%, total ~22.6 MiB)
-  const MAX_BYTES = 17 * 1024 * 1024;
-  const groups = [];
-  let current = [];
-  let acc = 0;
-  for (const item of loaded) {
-    const estSize = item.buf.length; // tamaño sin base64; base64 añade ~33%
-    if (acc > 0 && acc + estSize > MAX_BYTES) {
-      groups.push(current);
-      current = [];
-      acc = 0;
-    }
-    current.push(item);
-    acc += estSize;
-  }
-  if (current.length) groups.push(current);
-
-  console.log(`[MAIL] Mensajes: ${groups.length}`);
-
+  // Enviar un email por adjunto para personalizar asunto/cuerpo
   let idx = 0;
-  for (const group of groups) {
+  for (const { path: filePath, name, contentType = 'application/pdf' } of attachments) {
     idx += 1;
+    const buf = await fs.readFile(filePath);
+
+    const baseName = (name || 'Descargable').replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '');
+    const prettyName = baseName.replace(/_/g, ' ');
+    const finalSubject = `${prettyName}: descargable de Keto Optimizado`;
+    const body = `¡Hola intergaláctic@! 🪐\n\nMuchísimas gracias por tu confianza :)\n\nAquí tienes tu guía en PDF descargable de Keto Optimizado ${prettyName}.\n\n¡Nos vemos dentro del curso!\n\nUn abrazo,\nPhil.`;
+
     const boundary = 'mixed_' + Date.now() + '_' + idx;
-    const partHeaders = [
-      `From: PDF Delivery <${GMAIL_SENDER}>`,
+    const parts = [
+      `From: Phil Hugo <${GMAIL_SENDER}>`,
       `To: ${to}`,
-      `Subject: ${subject}${groups.length > 1 ? ` (${idx}/${groups.length})` : ''}`,
+      `Subject: ${finalSubject}`,
       'MIME-Version: 1.0',
       `Content-Type: multipart/mixed; boundary=${boundary}`,
       '',
       `--${boundary}`,
       'Content-Type: text/plain; charset="UTF-8"',
-      'Content-Transfer-Encoding: 7bit',
+      'Content-Transfer-Encoding: base64',
       '',
-      text,
+      Buffer.from(body, 'utf8').toString('base64'),
+      '',
+      `--${boundary}`,
+      `Content-Type: ${contentType}; name="${name}"`,
+      'Content-Transfer-Encoding: base64',
+      `Content-Disposition: attachment; filename="${name}"`,
+      '',
+      buf.toString('base64'),
+      `--${boundary}--`,
     ];
 
-    for (const it of group) {
-      partHeaders.push(
-        '',
-        `--${boundary}`,
-        `Content-Type: ${it.contentType}; name="${it.name}"`,
-        'Content-Transfer-Encoding: base64',
-        `Content-Disposition: attachment; filename="${it.name}"`,
-        '',
-        it.buf.toString('base64'),
-      );
-    }
-    partHeaders.push(`--${boundary}--`);
-
-    const rawMessage = partHeaders.join('\r\n');
+    const rawMessage = parts.join('\r\n');
     const encodedMessage = Buffer.from(rawMessage)
       .toString('base64')
       .replace(/\+/g, '-')
       .replace(/\//g, '_')
       .replace(/=+$/, '');
 
-    // log compacto
     const result = await gmail.users.messages.send({
       userId: 'me',
       requestBody: { raw: encodedMessage },
     });
-    console.log(`[MAIL] OK ${idx}/${groups.length} id=${result?.data?.id}`);
+    console.log(`[MAIL] OK ${idx}/${attachments.length} id=${result?.data?.id}`);
   }
 }
 
