@@ -20,7 +20,26 @@ export async function addSecurityFeatures(pdfDoc, watermarkText, documentHash) {
     const page = pages[pageIndex];
     const { width, height } = page.getSize();
     const rotation = page.getRotation()?.angle || 0;
-    const bandHeight = 36;
+
+    // Altura de banda proporcional al alto de la página (clamp 32-72 pt)
+    const rawBand = Math.round(height * 0.04);
+    const bandHeight = Math.max(32, Math.min(72, rawBand));
+
+    // Tipografías proporcionales a la banda
+    const fontL1 = Math.max(9, Math.round(bandHeight * 0.28));
+    const fontL2 = Math.max(6, Math.round(bandHeight * 0.18));
+    const fontL3 = Math.max(6, Math.round(bandHeight * 0.18));
+
+    // Posiciones verticales relativas dentro de la banda
+    const y1 = Math.round(bandHeight * 0.33);
+    const y2 = Math.round(bandHeight * 0.61);
+    const y3 = Math.round(bandHeight * 0.86);
+
+    // Icono y márgenes proporcionales
+    const iconSize = Math.round(bandHeight * 0.55);
+    const iconY = Math.round((bandHeight - iconSize) / 2);
+    const marginX = Math.round(bandHeight * 0.28); // ~10 cuando bandHeight=36
+    const textStartX = marginX + iconSize + Math.round(bandHeight * 0.28); // ~40 cuando bandHeight=36
 
     const line1 = "Documento encriptado y firmado electrónicamente. Datos guardados y trazados.";
     const line2 = `${fullName} | ${email} | ${documentHash}`;
@@ -30,18 +49,18 @@ export async function addSecurityFeatures(pdfDoc, watermarkText, documentHash) {
       <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${bandHeight}">
         <style>
           .bg { fill: rgb(51, 51, 51); }
-          .l1 { font-family: 'DejaVu Sans', Helvetica, Arial, sans-serif; font-size: 9px; font-weight: bold; fill: white; }
-          .l2 { font-family: 'DejaVu Sans', Helvetica, Arial, sans-serif; font-size: 6px; fill: rgb(153, 204, 255); }
-          .l3 { font-family: 'DejaVu Sans', Helvetica, Arial, sans-serif; font-size: 6px; font-style: italic; fill: white; }
+          .l1 { font-family: 'DejaVu Sans', Helvetica, Arial, sans-serif; font-size: ${fontL1}px; font-weight: bold; fill: white; }
+          .l2 { font-family: 'DejaVu Sans', Helvetica, Arial, sans-serif; font-size: ${fontL2}px; fill: rgb(153, 204, 255); }
+          .l3 { font-family: 'DejaVu Sans', Helvetica, Arial, sans-serif; font-size: ${fontL3}px; font-style: italic; fill: white; }
         </style>
         <rect width="100%" height="100%" class="bg" />
-        <svg x="10" y="${(bandHeight / 2) - 10}" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg x="${marginX}" y="${iconY}" width="${iconSize}" height="${iconSize}" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
           <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
         </svg>
-        <text x="40" y="12" class="l1">${line1}</text>
-        <text x="40" y="22" class="l2">${line2}</text>
-        <text x="40" y="30" class="l3">${line3}</text>
+        <text x="${textStartX}" y="${y1}" class="l1">${line1}</text>
+        <text x="${textStartX}" y="${y2}" class="l2">${line2}</text>
+        <text x="${textStartX}" y="${y3}" class="l3">${line3}</text>
       </svg>
     `;
 
