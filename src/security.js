@@ -3,7 +3,7 @@ import { createHash } from 'crypto';
 import sharp from 'sharp';
 
 export async function addSecurityFeatures(pdfDoc, watermarkText, documentHash) {
-  console.log("--- APLICANDO BANDA DE SEGURIDAD Y METADATOS (COMO IMAGEN) ---");
+  console.log("[SECURITY] Inicio");
   
   const [fullName, email, timestamp] = watermarkText.split(' | ');
   pdfDoc.setTitle('Keto Optimizado');
@@ -46,13 +46,11 @@ export async function addSecurityFeatures(pdfDoc, watermarkText, documentHash) {
 
     const dpi = 300; // Alta resolución para mejor nitidez
     try {
-      console.log(`[SECURITY] Renderizando banda (página ${pageIndex + 1}/${pages.length}) @ ${dpi} DPI`);
+      // log mínimo por página
       const bandPngBuffer = await sharp(Buffer.from(bandSvg), { density: dpi })
         .png({ palette: true, compressionLevel: 9, effort: 6 })
         .toBuffer();
-      console.log(`[SECURITY] Banda renderizada (${bandPngBuffer.length} bytes)`);
       const bandImage = await pdfDoc.embedPng(bandPngBuffer);
-      console.log(`[SECURITY] Banda embebida en PDF`);
 
       // Ajuste de colocación con rotación de página
       if (rotation % 180 === 0) {

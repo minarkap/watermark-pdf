@@ -18,7 +18,7 @@ const oAuth2Client = new google.auth.OAuth2(
 oAuth2Client.setCredentials({ refresh_token: GMAIL_REFRESH_TOKEN });
 
 export async function sendEmailWithAttachments({ to, subject, text, attachments }) {
-  console.log(`[MAIL] Preparando envío a ${to} via Gmail API con ${attachments.length} adjuntos`);
+  console.log(`[MAIL] Envío a ${to} con ${attachments.length} adj.`);
   const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
 
   // Pre-cargar buffers y tamaños
@@ -46,7 +46,7 @@ export async function sendEmailWithAttachments({ to, subject, text, attachments 
   }
   if (current.length) groups.push(current);
 
-  console.log(`[MAIL] Enviando en ${groups.length} mensaje(s)`);
+  console.log(`[MAIL] Mensajes: ${groups.length}`);
 
   let idx = 0;
   for (const group of groups) {
@@ -86,12 +86,12 @@ export async function sendEmailWithAttachments({ to, subject, text, attachments 
       .replace(/\//g, '_')
       .replace(/=+$/, '');
 
-    console.log(`[MAIL] Enviando mensaje ${idx}/${groups.length} via Gmail API...`);
+    // log compacto
     const result = await gmail.users.messages.send({
       userId: 'me',
       requestBody: { raw: encodedMessage },
     });
-    console.log(`[MAIL] Correo enviado (${idx}/${groups.length}), id=${result?.data?.id}`);
+    console.log(`[MAIL] OK ${idx}/${groups.length} id=${result?.data?.id}`);
   }
 }
 

@@ -3,7 +3,8 @@ import fs from 'fs/promises';
 import sharp from 'sharp';
 
 export async function applyCentralWatermark(pdfDoc, watermarkText) {
-  console.log("--- APLICANDO WATERMARK CENTRAL ---");
+  // Log compacto
+  console.log("[WM] Inicio");
 
   const pages = pdfDoc.getPages();
   const firstSize = pages[0].getSize();
@@ -41,7 +42,7 @@ export async function applyCentralWatermark(pdfDoc, watermarkText) {
         height: drawHeight,
         opacity: 0.5,
       });
-      console.log(`[WM] Watermark dibujado en página ${pageIndex + 1}`);
+      // log mínimo por página
     } catch (err) {
       console.error(`[WM] Error al dibujar watermark central en página ${pageIndex + 1}:`, err?.message);
       throw err;

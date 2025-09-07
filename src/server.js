@@ -122,10 +122,10 @@ app.post('/webhook', async (req, res) => {
         pdfFiles = entries.filter(e => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).map(e => path.join(baseDir, e.name));
       } catch (e) {
         if (e?.code !== 'ENOENT') throw e;
-        console.log('[FLOW] Carpeta no encontrada en imagen. Intentando KETO_OPTIMIZADO_URLS');
+        console.log('[FLOW] Carpeta PDFs no encontrada. Intentando KETO_OPTIMIZADO_URLS');
       }
       if (pdfFiles.length > 0) {
-        console.log(`[FLOW] PDFs locales detectados: ${pdfFiles.length}`);
+        console.log(`[FLOW] PDFs locales: ${pdfFiles.length}`);
         for (const pdfPath of pdfFiles) {
           try {
             console.log('[FLOW] Procesando', pdfPath);
@@ -137,7 +137,7 @@ app.post('/webhook', async (req, res) => {
               const sanitizedPath = path.join(tmpDir, `sanitized_${Date.now()}.pdf`);
               await exec(`gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.6 -sOutputFile=${sanitizedPath} -f ${pdfPath} | cat`);
               bytes = await fs.readFile(sanitizedPath);
-              console.log('[FLOW] PDF saneado con Ghostscript');
+              // gs ok
             } catch (gsErr) {
               console.log('[FLOW] Ghostscript falló o no era necesario:', gsErr?.message || gsErr);
             }
@@ -149,7 +149,7 @@ app.post('/webhook', async (req, res) => {
               await fs.writeFile(qpdfIn, bytes);
               await exec(`qpdf --linearize --stream-data=preserve --recompress-flate --object-streams=preserve --qdf ${qpdfIn} ${qpdfOut} | cat`);
               bytes = await fs.readFile(qpdfOut);
-              console.log('[FLOW] PDF saneado con qpdf');
+              // qpdf ok
             } catch (qErr) {
               console.log('[FLOW] qpdf falló o no era necesario:', qErr?.message || qErr);
             }
@@ -168,7 +168,7 @@ app.post('/webhook', async (req, res) => {
             await fs.writeFile(outPath, finalBytes);
             const sendPath = await compressIfTooLarge(outPath);
             outputs.push({ path: sendPath, name: path.basename(sendPath) });
-            console.log('[FLOW] Listo', sendPath);
+            // listo por archivo
           } catch (fileErr) {
             console.error('[FLOW] Error procesando', pdfPath, '-', fileErr?.message);
             continue;
@@ -188,7 +188,7 @@ app.post('/webhook', async (req, res) => {
         if (!Array.isArray(list) || list.length === 0) {
           throw new Error('KETO_OPTIMIZADO_URLS debe ser un array no vacío');
         }
-        console.log(`[FLOW] Descargando ${list.length} PDFs desde KETO_OPTIMIZADO_URLS`);
+        console.log(`[FLOW] Descarga de ${list.length} PDFs desde URLs`);
         for (const item of list) {
           const url = item?.url || item?.URL || item?.link;
           const name = item?.name || (url ? url.split('/').pop() : null);
@@ -213,7 +213,7 @@ app.post('/webhook', async (req, res) => {
               await fs.writeFile(dlPath, bytes);
               await exec(`gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.6 -sOutputFile=${sanitizedPath} -f ${dlPath} | cat`);
               bytes = await fs.readFile(sanitizedPath);
-              console.log('[FLOW] PDF descargado saneado con Ghostscript');
+              // gs ok descarga
             } catch (gsErr) {
               console.log('[FLOW] Ghostscript falló o no era necesario (descarga):', gsErr?.message || gsErr);
             }
@@ -225,7 +225,7 @@ app.post('/webhook', async (req, res) => {
               await fs.writeFile(qpdfIn, bytes);
               await exec(`qpdf --linearize --stream-data=preserve --recompress-flate --object-streams=preserve --qdf ${qpdfIn} ${qpdfOut} | cat`);
               bytes = await fs.readFile(qpdfOut);
-              console.log('[FLOW] PDF (descarga) saneado con qpdf');
+              // qpdf ok descarga
             } catch (qErr) {
               console.log('[FLOW] qpdf (descarga) falló o no era necesario:', qErr?.message || qErr);
             }
@@ -244,7 +244,7 @@ app.post('/webhook', async (req, res) => {
             await fs.writeFile(outPath, finalBytes);
             const sendPath = await compressIfTooLarge(outPath);
             outputs.push({ path: sendPath, name: path.basename(sendPath) });
-            console.log('[FLOW] Listo', sendPath);
+            // listo url
           } catch (urlErr) {
             console.error('[FLOW] Error procesando', url, '-', urlErr?.message);
             continue;
@@ -256,7 +256,7 @@ app.post('/webhook', async (req, res) => {
       return;
     }
 
-    console.log('[FLOW] Enviando email con adjuntos...');
+    console.log('[FLOW] Enviando email...');
     await sendEmailWithAttachments({
       to: email,
       subject: 'Tu material personalizado',
