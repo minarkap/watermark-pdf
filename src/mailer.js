@@ -34,7 +34,7 @@ export async function sendEmailWithAttachments({ to, subject, text, attachments,
     const safeFirst = (firstName || '').trim() || 'intergaláctic@';
     // Asunto debe ser UNA línea
     const finalSubject = prettyName;
-    const body = `¡Hola ${safeFirst}!\n\nMuchísimas gracias por tu confianza :)\n¡Ahora empieza tu cambio!\n\nAquí tienes tu PDF ${prettyName}.\n\nGuarda bien esta guía en tu móvil, ordenador o imprímela. Tenla\nsiempre a mano para que puedas acceder a ella fácilmente y consigas\ntus objetivos. ¡Es tu mapa único de transformación!\n\nUn abrazo intergaláctico 🪐\nPhil.`;
+    const body = `¡Hola, ${safeFirst}!\n\nMuchísimas gracias por tu confianza :)\n¡Ahora empieza tu cambio!\n\nAquí tienes tu PDF ${prettyName}.\n\nGuarda bien esta guía en tu móvil, ordenador o imprímela. Tenla siempre a mano para que puedas acceder a ella fácilmente y consigas tus objetivos. ¡Es tu mapa único de transformación!\n\nUn abrazo intergaláctico 🪐\nPhil.`;
 
     const boundary = 'mixed_' + Date.now() + '_' + idx;
     const parts = [
