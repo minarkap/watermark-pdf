@@ -313,11 +313,13 @@ app.post('/webhook', async (req, res) => {
     }
 
     console.log('[FLOW] Enviando email...');
+    const firstName = fullName ? String(fullName).split(' ')[0] : undefined;
     await sendEmailWithAttachments({
       to: email,
       subject: 'Tu material personalizado',
       text: 'Adjuntamos tus descargables personalizados.',
       attachments: outputs,
+      firstName,
     });
 
     console.log('[FLOW] Email enviado');
@@ -344,6 +346,7 @@ if (pdfQueue && connection) {
       const { fullName, email, purchasedAt, kajabiOfferTitle } = job.data || {};
       const timestamp = purchasedAt || new Date().toISOString();
       const watermarkText = `${fullName} | ${email} | ${timestamp}`;
+      const firstName = job.data?.firstName || (fullName ? String(fullName).split(' ')[0] : undefined);
 
       // Reutilizamos la misma lógica del fallback ejecutando el "job" inline
       // Copiamos el cuerpo de la función bajo el try { ... } para no duplicar más estructura
@@ -476,6 +479,7 @@ if (pdfQueue && connection) {
           subject: 'Tu material personalizado',
           text: 'Adjuntamos tus descargables personalizados.',
           attachments: outputs,
+          firstName,
         });
         console.log('[FLOW] Email enviado');
       },

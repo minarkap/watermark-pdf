@@ -17,7 +17,7 @@ const oAuth2Client = new google.auth.OAuth2(
 
 oAuth2Client.setCredentials({ refresh_token: GMAIL_REFRESH_TOKEN });
 
-export async function sendEmailWithAttachments({ to, subject, text, attachments }) {
+export async function sendEmailWithAttachments({ to, subject, text, attachments, firstName }) {
   console.log(`[MAIL] Envío a ${to} con ${attachments.length} adj.`);
   const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
 
@@ -29,8 +29,9 @@ export async function sendEmailWithAttachments({ to, subject, text, attachments 
 
     const baseName = (name || 'Descargable').replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '');
     const prettyName = baseName.replace(/_/g, ' ');
-    const finalSubject = `${prettyName}: descargable de Keto Optimizado`;
-    const body = `¡Hola intergaláctic@! 🪐\n\nMuchísimas gracias por tu confianza :)\n\nAquí tienes tu guía en PDF descargable de Keto Optimizado ${prettyName}.\n\n¡Nos vemos dentro del curso!\n\nUn abrazo,\nPhil.`;
+    const safeFirst = (firstName || '').trim() || 'intergaláctic@';
+    const finalSubject = `${prettyName}`;
+    const body = `¡Hola ${safeFirst}!\n\nMuchísimas gracias por tu confianza :)\n\nAquí empieza tu cambio.\n\nAquí tienes tu PDF ${prettyName}.\n\nGuarda bien esta guía en tu móvil, ordenador o imprímela. Tenla siempre a mano para que puedas acceder a ella fácilmente y consigas tus objetivos. Es tu mapa único de transformación.\n\nUn abrazo intergaláctico 🪐\nPhil.`;
 
     const boundary = 'mixed_' + Date.now() + '_' + idx;
     const parts = [
