@@ -124,7 +124,8 @@ const app = express();
 app.use(express.json({ limit: '2mb' }));
 
 // Storage temporal de zips por token (memoria + disco)
-const downloadTokens = new Map(); // token -> { path, expiresAt }
+const downloadTokens = new Map(); // token -> { path, expiresAt, filename }
+const ZIP_TTL_MS = 1000 * 60 * 60 * 48; // 48h
 
 app.get('/download/:token', async (req, res) => {
   try {
@@ -132,6 +133,7 @@ app.get('/download/:token', async (req, res) => {
     const entry = downloadTokens.get(token);
     if (!entry) return res.status(404).send('Link no válido o expirado');
     if (Date.now() > entry.expiresAt) {
+      try { await fs.rm(entry.path).catch(() => {}); } catch {}
       downloadTokens.delete(token);
       return res.status(410).send('Link expirado');
     }
@@ -140,6 +142,17 @@ app.get('/download/:token', async (req, res) => {
     res.status(500).send('Error de descarga');
   }
 });
+
+// Limpieza periódica de zips expirados
+setInterval(async () => {
+  const now = Date.now();
+  for (const [token, entry] of downloadTokens.entries()) {
+    if (now > entry.expiresAt) {
+      try { await fs.rm(entry.path).catch(() => {}); } catch {}
+      downloadTokens.delete(token);
+    }
+  }
+}, 60 * 60 * 1000); // cada hora
 
 // Validación de esquema del webhook (básico)
 const ajv = new Ajv({ removeAdditional: true, allErrors: true });
@@ -226,151 +239,147 @@ app.post('/webhook', async (req, res) => {
     const timestamp = purchasedAt || new Date().toISOString();
     const watermarkText = `${fullName} | ${email} | ${timestamp}`;
 
-    // Si es una oferta de Keto Optimizado, procesar todos los PDFs de la carpeta
-    const allowedTitles = new Set([
-      'Keto Optimizado',
-      'OFERTA CURSO KETO OPTIMIZADO',
-      'CURSO KETO OPTIMIZADO (UPSELL KETOFAST)',
-      'Test Product'
-    ]);
-    const isKetoOptimizado = kajabiOfferTitle && allowedTitles.has(kajabiOfferTitle);
+    // Mapeo de títulos a carpetas y URLs (igual que en el worker)
+    const offerMappings = {
+      keto_optimizado: {
+        titles: new Set([
+          'Keto Optimizado',
+          'OFERTA CURSO KETO OPTIMIZADO',
+          'CURSO KETO OPTIMIZADO (UPSELL KETOFAST)',
+          'Test Product',
+          'Bundle Keto Optimizado + Ayuno Experto',
+          'Bundle Keto Optimizado + Video Coaching',
+        ]),
+        urls_env: 'KETO_OPTIMIZADO_URLS',
+        dir: path.join(__dirname, '..', 'descargables', 'keto_optimizado'),
+      },
+      keto_fast: {
+        titles: new Set(['Keto-Fast']),
+        urls_env: 'KETO_FAST_URLS',
+        dir: path.join(__dirname, '..', 'descargables', 'keto_fast'),
+      },
+      ldl_colesterol: {
+        titles: new Set(['LDL Colesterol']),
+        urls_env: 'LDL_COLESTEROL_URLS',
+        dir: path.join(__dirname, '..', 'descargables', 'ldl_colesterol'),
+      },
+      control_apetito: {
+        titles: new Set(['Control Apetito']),
+        urls_env: 'CONTROL_APETITO_URLS',
+        dir: path.join(__dirname, '..', 'descargables', 'control_apetito'),
+      },
+      analiticas_esenciales: {
+        titles: new Set(['Analíticas esenciales', 'Analiticas esenciales']),
+        urls_env: 'ANALITICAS_ESENCIALES_URLS',
+        dir: path.join(__dirname, '..', 'descargables', 'analiticas_esenciales'),
+      },
+    };
+
+    let offerKey = null;
+    for (const [key, config] of Object.entries(offerMappings)) {
+      if (kajabiOfferTitle && config.titles.has(kajabiOfferTitle)) {
+        offerKey = key;
+        break;
+      }
+    }
 
     const outputs = [];
-    if (isKetoOptimizado) {
-      console.log('[FLOW] Oferta Keto Optimizado detectada. Procesando carpeta descargables/keto_optimizado');
-      const baseDir = path.join(__dirname, '..', 'descargables', 'keto_optimizado');
-      let pdfFiles = [];
+    if (offerKey) {
+      const config = offerMappings[offerKey];
+      console.log(`[FLOW] Oferta '${offerKey}' detectada. Procesando...`);
+      let filesToProcess = [];
+
       try {
-        const entries = await fs.readdir(baseDir, { withFileTypes: true });
-        pdfFiles = entries.filter(e => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).map(e => path.join(baseDir, e.name));
+        const entries = await fs.readdir(config.dir, { withFileTypes: true });
+        const pdfFiles = entries.filter(e => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).map(e => ({
+          name: e.name,
+          path: path.join(config.dir, e.name),
+          source: 'local'
+        }));
+        if (pdfFiles.length > 0) filesToProcess = pdfFiles;
       } catch (e) {
         if (e?.code !== 'ENOENT') throw e;
-        console.log('[FLOW] Carpeta PDFs no encontrada. Intentando KETO_OPTIMIZADO_URLS');
       }
-      if (pdfFiles.length > 0) {
-        console.log(`[FLOW] PDFs locales: ${pdfFiles.length}`);
-        for (const pdfPath of pdfFiles) {
+
+      if (filesToProcess.length === 0) {
+        const urlsJson = process.env[config.urls_env];
+        if (urlsJson) {
           try {
-            console.log('[FLOW] Procesando', pdfPath);
-            let bytes = await fs.readFile(pdfPath);
-            // Intento de saneado con Ghostscript
-            if (process.env.ENABLE_GS !== 'false') {
-              try {
-                const tmpDir = path.join(__dirname, '..', 'tmp');
-                await fs.mkdir(tmpDir, { recursive: true });
-                const sanitizedPath = path.join(tmpDir, `sanitized_${Date.now()}.pdf`);
-                await exec(`gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.6 -sOutputFile=${sanitizedPath} -f ${pdfPath} | cat`);
-                bytes = await fs.readFile(sanitizedPath);
-              } catch {}
+            const list = JSON.parse(urlsJson);
+            if (Array.isArray(list) && list.length > 0) {
+              filesToProcess = list.map(item => ({
+                name: item.name,
+                url: item.url,
+                source: 'remote'
+              }));
             }
-            // Saneado adicional con qpdf (linealizar y reparar)
-            if (process.env.ENABLE_QPDF !== 'false') {
-              try {
-                const tmpDir = path.join(__dirname, '..', 'tmp');
-                const qpdfIn = path.join(tmpDir, `qpdf_in_${Date.now()}.pdf`);
-                const qpdfOut = path.join(tmpDir, `qpdf_out_${Date.now()}.pdf`);
-                await fs.writeFile(qpdfIn, bytes);
-                await exec(`qpdf --linearize --stream-data=preserve --recompress-flate --object-streams=preserve --qdf ${qpdfIn} ${qpdfOut} | cat`);
-                bytes = await fs.readFile(qpdfOut);
-              } catch {}
-            }
-            bytes = await normalizeWithPdfLib(bytes);
-            let pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
-            await applyCentralWatermark(pdfDoc, watermarkText);
-            const watermarkedBytes = await pdfDoc.save();
-            const documentHash = createHash('sha256').update(watermarkedBytes).digest('hex');
-            pdfDoc = await PDFDocument.load(watermarkedBytes);
-            await addSecurityFeatures(pdfDoc, watermarkText, documentHash);
-            const finalBytes = await pdfDoc.save();
-            const tmpDir = path.join(__dirname, '..', 'tmp');
-            await fs.mkdir(tmpDir, { recursive: true });
-            const outName = path.basename(pdfPath).replace(/\.pdf$/i, `_${Date.now()}.pdf`);
-            const outPath = path.join(tmpDir, outName);
-            await fs.writeFile(outPath, finalBytes);
-            const sendPath = await compressIfTooLarge(outPath);
-            outputs.push({ path: sendPath, name: path.basename(sendPath) });
-            // listo por archivo
-          } catch (fileErr) {
-            console.error('[FLOW] Error procesando', pdfPath, '-', fileErr?.message);
-            continue;
+          } catch {
+            throw new Error(`${config.urls_env} no es un JSON válido`);
           }
         }
-      } else {
-        const urlsJson = process.env.KETO_OPTIMIZADO_URLS;
-        if (!urlsJson) {
-          throw new Error('No hay PDFs locales ni KETO_OPTIMIZADO_URLS definido');
-        }
-        let list;
+      }
+
+      if (filesToProcess.length === 0) {
+        throw new Error(`No se encontraron PDFs locales ni URLs para la oferta '${offerKey}'`);
+      }
+
+      console.log(`[FLOW] Procesando ${filesToProcess.length} PDFs...`);
+      for (const file of filesToProcess) {
         try {
-          list = JSON.parse(urlsJson);
-        } catch {
-          throw new Error('KETO_OPTIMIZADO_URLS no es un JSON válido');
-        }
-        if (!Array.isArray(list) || list.length === 0) {
-          throw new Error('KETO_OPTIMIZADO_URLS debe ser un array no vacío');
-        }
-        console.log(`[FLOW] Descarga de ${list.length} PDFs desde URLs`);
-        for (const item of list) {
-          const url = item?.url || item?.URL || item?.link;
-          const name = item?.name || (url ? url.split('/').pop() : null);
-          if (!url || !name) {
-            console.log('[FLOW] Entrada inválida en KETO_OPTIMIZADO_URLS, saltando', item);
-            continue;
-          }
-          console.log('[FLOW] Descargando', url);
-          try {
-            let bytes = await downloadPdfWithDriveSupport(url);
-            // Validar cabecera PDF
+          console.log(`[FLOW] - ${file.name} (${file.source})`);
+          let bytes;
+          if (file.source === 'local') {
+            bytes = await fs.readFile(file.path);
+          } else {
+            bytes = await downloadPdfWithDriveSupport(file.url);
             if (bytes.slice(0, 5).toString() !== '%PDF-') {
               throw new Error('Contenido descargado no parece ser PDF (sin cabecera %PDF-)');
             }
-            // Guardar en carpeta del producto para uso futuro
-            const prodDir = path.join(__dirname, '..', 'descargables', 'keto_optimizado');
-            await fs.mkdir(prodDir, { recursive: true });
-            const dlPath = path.join(prodDir, name);
+            await fs.mkdir(config.dir, { recursive: true });
+            const dlPath = path.join(config.dir, file.name);
             await fs.writeFile(dlPath, bytes);
-
-            // Intento de saneado con Ghostscript vía archivo temporal
-            if (process.env.ENABLE_GS !== 'false') {
-              try {
-                const tmpDir = path.join(__dirname, '..', 'tmp');
-                await fs.mkdir(tmpDir, { recursive: true });
-                const sanitizedPath = path.join(tmpDir, `sanitized_${Date.now()}.pdf`);
-                await exec(`gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.6 -sOutputFile=${sanitizedPath} -f ${dlPath} | cat`);
-                bytes = await fs.readFile(sanitizedPath);
-              } catch {}
-            }
-            // Saneado adicional con qpdf
-            if (process.env.ENABLE_QPDF !== 'false') {
-              try {
-                const tmpDir = path.join(__dirname, '..', 'tmp');
-                const qpdfIn = path.join(tmpDir, `qpdf_in_${Date.now()}.pdf`);
-                const qpdfOut = path.join(tmpDir, `qpdf_out_${Date.now()}.pdf`);
-                await fs.writeFile(qpdfIn, bytes);
-                await exec(`qpdf --linearize --stream-data=preserve --recompress-flate --object-streams=preserve --qdf ${qpdfIn} ${qpdfOut} | cat`);
-                bytes = await fs.readFile(qpdfOut);
-              } catch {}
-            }
-            bytes = await normalizeWithPdfLib(bytes);
-            let pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
-            await applyCentralWatermark(pdfDoc, watermarkText);
-            const watermarkedBytes = await pdfDoc.save();
-            const documentHash = createHash('sha256').update(watermarkedBytes).digest('hex');
-            pdfDoc = await PDFDocument.load(watermarkedBytes);
-            await addSecurityFeatures(pdfDoc, watermarkText, documentHash);
-            const finalBytes = await pdfDoc.save();
+            bytes = await fs.readFile(dlPath);
+          }
+          
+          if (process.env.ENABLE_GS !== 'false') {
+            try {
+              const tmpDir = path.join(__dirname, '..', 'tmp');
+              await fs.mkdir(tmpDir, { recursive: true });
+              const inPath = path.join(tmpDir, `in_${Date.now()}.pdf`);
+              const outPath = path.join(tmpDir, `gs_out_${Date.now()}.pdf`);
+              await fs.writeFile(inPath, bytes);
+              await exec(`gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.6 -sOutputFile=${outPath} -f ${inPath} | cat`);
+              bytes = await fs.readFile(outPath);
+            } catch {}
+          }
+          if (process.env.ENABLE_QPDF !== 'false') {
+            try {
+              const tmpDir = path.join(__dirname, '..', 'tmp');
+              const inPath = path.join(tmpDir, `in_${Date.now()}.pdf`);
+              const outPath = path.join(tmpDir, `qpdf_out_${Date.now()}.pdf`);
+              await fs.writeFile(inPath, bytes);
+              await exec(`qpdf --linearize --stream-data=preserve --recompress-flate --object-streams=preserve --qdf ${inPath} ${outPath} | cat`);
+              bytes = await fs.readFile(outPath);
+            } catch {}
+          }
+          bytes = await normalizeWithPdfLib(bytes);
+          let pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
+          await applyCentralWatermark(pdfDoc, watermarkText);
+          const watermarkedBytes = await pdfDoc.save();
+          const documentHash = createHash('sha256').update(watermarkedBytes).digest('hex');
+          pdfDoc = await PDFDocument.load(watermarkedBytes);
+          await addSecurityFeatures(pdfDoc, watermarkText, documentHash);
+          const finalBytes = await pdfDoc.save();
     const tmpDir = path.join(__dirname, '..', 'tmp');
     await fs.mkdir(tmpDir, { recursive: true });
-            const outName = name.replace(/\.pdf$/i, `_${Date.now()}.pdf`);
-            const outPath = path.join(tmpDir, outName);
-            await fs.writeFile(outPath, finalBytes);
-            const sendPath = await compressIfTooLarge(outPath);
-            outputs.push({ path: sendPath, name: path.basename(sendPath) });
-            // listo url
-          } catch (urlErr) {
-            console.error('[FLOW] Error procesando', url, '-', urlErr?.message);
-            continue;
-          }
+          const outName = file.name.replace(/\.pdf$/i, `_${Date.now()}.pdf`);
+          const outPath = path.join(tmpDir, outName);
+          await fs.writeFile(outPath, finalBytes);
+          const sendPath = await compressIfTooLarge(outPath);
+          outputs.push({ path: sendPath, name: path.basename(sendPath) });
+        } catch (fileErr) {
+          console.error(`[FLOW] Error procesando ${file.name}:`, fileErr?.message);
+          continue;
         }
       }
     } else {
@@ -380,13 +389,47 @@ app.post('/webhook', async (req, res) => {
 
     console.log('[FLOW] Enviando email...');
     const firstName = fullName ? String(fullName).split(' ')[0] : undefined;
-    await sendEmailWithAttachments({
+    // Si hay más de 2 adjuntos o total > ~17 MiB, enviar link de descarga ZIP
+    let totalSize = 0;
+    for (const o of outputs) {
+      try { totalSize += (await fs.stat(o.path)).size; } catch {}
+    }
+    if (outputs.length > 2 || totalSize > 17 * 1024 * 1024) {
+      const tmpDir = path.join(__dirname, '..', 'tmp');
+      await fs.mkdir(tmpDir, { recursive: true });
+      const zipName = `descargables_${Date.now()}.zip`;
+      const zipPath = path.join(tmpDir, zipName);
+      await new Promise((resolve, reject) => {
+        const output = fsSync.createWriteStream(zipPath);
+        const zip = archiver('zip', { zlib: { level: 9 } });
+        output.on('close', resolve);
+        zip.on('error', reject);
+        zip.pipe(output);
+        for (const f of outputs) zip.file(f.path, { name: f.name });
+        zip.finalize();
+      });
+      const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
+      downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS });
+      const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
+      const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
+      await sendEmailWithAttachments({
+        to: email,
+        subject: 'Tus descargables personalizados',
+        text: undefined,
+        attachments: [],
+        firstName: firstName,
+        downloadLink: link,
+        names: outputs.map(o => o.name.replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '').replace(/_/g, ' ')),
+      });
+    } else {
+      await sendEmailWithAttachments({
       to: email,
-      subject: 'Tu material personalizado',
-      text: 'Adjuntamos tus descargables personalizados.',
-      attachments: outputs,
-      firstName,
-    });
+        subject: 'Tu material personalizado',
+        text: 'Adjuntamos tus descargables personalizados.',
+        attachments: outputs,
+        firstName,
+      });
+    }
 
     console.log('[FLOW] Email enviado');
 
@@ -435,6 +478,21 @@ if (pdfQueue && connection) {
           titles: new Set(['Keto-Fast']),
           urls_env: 'KETO_FAST_URLS',
           dir: path.join(__dirname, '..', 'descargables', 'keto_fast'),
+        },
+        ldl_colesterol: {
+          titles: new Set(['LDL Colesterol']),
+          urls_env: 'LDL_COLESTEROL_URLS',
+          dir: path.join(__dirname, '..', 'descargables', 'ldl_colesterol'),
+        },
+        control_apetito: {
+          titles: new Set(['Control Apetito']),
+          urls_env: 'CONTROL_APETITO_URLS',
+          dir: path.join(__dirname, '..', 'descargables', 'control_apetito'),
+        },
+        analiticas_esenciales: {
+          titles: new Set(['Analíticas esenciales', 'Analiticas esenciales']),
+          urls_env: 'ANALITICAS_ESENCIALES_URLS',
+          dir: path.join(__dirname, '..', 'descargables', 'analiticas_esenciales'),
         }
       };
       
@@ -579,7 +637,7 @@ if (pdfQueue && connection) {
           zip.finalize();
         });
         const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
-        downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + 1000 * 60 * 60 * 24 }); // 24h
+        downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS });
         const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
         const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
         await sendEmailWithAttachments({
