@@ -4,6 +4,7 @@ import { applyCentralWatermark } from './watermark.js';
 import { addSecurityFeatures } from './security.js';
 import { sendEmailWithAttachments } from './mailer.js';
 import path from 'path';
+import fsSync from 'fs';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
 import { PDFDocument } from 'pdf-lib';
@@ -12,6 +13,7 @@ import { exec as execCb } from 'child_process';
 import { promisify } from 'util';
 import { Queue, Worker } from 'bullmq';
 import Ajv from 'ajv';
+import archiver from 'archiver';
 const exec = promisify(execCb);
 
 // Cola en Redis (BullMQ)
@@ -120,6 +122,24 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
+
+// Storage temporal de zips por token (memoria + disco)
+const downloadTokens = new Map(); // token -> { path, expiresAt }
+
+app.get('/download/:token', async (req, res) => {
+  try {
+    const token = req.params.token;
+    const entry = downloadTokens.get(token);
+    if (!entry) return res.status(404).send('Link no válido o expirado');
+    if (Date.now() > entry.expiresAt) {
+      downloadTokens.delete(token);
+      return res.status(410).send('Link expirado');
+    }
+    return res.download(entry.path, entry.filename || 'descargables.zip');
+  } catch {
+    res.status(500).send('Error de descarga');
+  }
+});
 
 // Validación de esquema del webhook (básico)
 const ajv = new Ajv({ removeAdditional: true, allErrors: true });
@@ -538,13 +558,47 @@ if (pdfQueue && connection) {
       }
 
       console.log('[FLOW] Enviando email...');
-      await sendEmailWithAttachments({
-        to: email,
-        subject: 'Tu material personalizado',
-        text: 'Adjuntamos tus descargables personalizados.',
-        attachments: outputs,
-        firstName,
-      });
+      const firstNameLocal = (firstName || (fullName ? String(fullName).split(' ')[0] : undefined));
+      // Si hay más de 2 adjuntos o total > ~17 MiB, enviar link de descarga ZIP
+      let totalSize = 0;
+      for (const o of outputs) {
+        try { totalSize += (await fs.stat(o.path)).size; } catch {}
+      }
+      if (outputs.length > 2 || totalSize > 17 * 1024 * 1024) {
+        const tmpDir = path.join(__dirname, '..', 'tmp');
+        await fs.mkdir(tmpDir, { recursive: true });
+        const zipName = `descargables_${Date.now()}.zip`;
+        const zipPath = path.join(tmpDir, zipName);
+        await new Promise((resolve, reject) => {
+          const output = fsSync.createWriteStream(zipPath);
+          const zip = archiver('zip', { zlib: { level: 9 } });
+          output.on('close', resolve);
+          zip.on('error', reject);
+          zip.pipe(output);
+          for (const f of outputs) zip.file(f.path, { name: f.name });
+          zip.finalize();
+        });
+        const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
+        downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + 1000 * 60 * 60 * 24 }); // 24h
+        const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
+        const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
+        await sendEmailWithAttachments({
+          to: email,
+          subject: 'Tus descargables personalizados',
+          text: `¡Hola, ${firstNameLocal || 'intergaláctic@'}!\n\nPara facilitarte la descarga, aquí tienes un enlace válido 24h:\n${link}`,
+          attachments: [],
+          firstName: firstNameLocal,
+        });
+      } else {
+        await sendEmailWithAttachments({
+          to: email,
+          subject: 'Tu material personalizado',
+          text: 'Adjuntamos tus descargables personalizados.',
+          attachments: outputs,
+          firstName: firstNameLocal,
+        });
+      }
+
       console.log('[FLOW] Email enviado');
     },
     { connection, concurrency: 1 }
