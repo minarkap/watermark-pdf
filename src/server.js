@@ -585,9 +585,11 @@ if (pdfQueue && connection) {
         await sendEmailWithAttachments({
           to: email,
           subject: 'Tus descargables personalizados',
-          text: `¡Hola, ${firstNameLocal || 'intergaláctic@'}!\n\nPara facilitarte la descarga, aquí tienes un enlace válido 24h:\n${link}`,
+          text: undefined,
           attachments: [],
           firstName: firstNameLocal,
+          downloadLink: link,
+          names: outputs.map(o => o.name.replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '').replace(/_/g, ' ')),
         });
       } else {
         await sendEmailWithAttachments({

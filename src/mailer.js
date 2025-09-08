@@ -17,19 +17,48 @@ const oAuth2Client = new google.auth.OAuth2(
 
 oAuth2Client.setCredentials({ refresh_token: GMAIL_REFRESH_TOKEN });
 
-export async function sendEmailWithAttachments({ to, subject, text, attachments, firstName }) {
-  console.log(`[MAIL] Envío a ${to} con ${attachments.length} adj.`);
+export async function sendEmailWithAttachments({ to, subject, text, attachments, firstName, downloadLink, names }) {
+  console.log(`[MAIL] Envío a ${to} con ${attachments?.length || 0} adj.`);
   const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
 
   const encodeHeader = (s) => `=?UTF-8?B?${Buffer.from(s, 'utf8').toString('base64')}?=`;
 
-  // Caso especial: sin adjuntos (p.ej. enlace de descarga ZIP) → enviar 1 correo sin adjuntos
+  // Caso especial: sin adjuntos (p.ej. enlace de descarga ZIP)
   if (!attachments || attachments.length === 0) {
     const safeFirst = (firstName || '').trim() || 'intergaláctic@';
-    const boundary = 'alt_' + Date.now();
-    const bodyText = text || `¡Hola, ${safeFirst}!`;
-    const bodyHtml = `<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;white-space:normal;line-height:1.5;font-size:14px;color:#111">${(bodyText || '').split('\n').map(p => `<p>${p.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</p>`).join('')}</div>`;
+    const list = Array.isArray(names) ? names : [];
+    const bulletsText = list.map(n => `- ${n}`).join('\n');
 
+    const bodyText = (
+      text ||
+      `¡Hola, ${safeFirst}!\n\n` +
+      `Muchísimas gracias por tu confianza :)\n` +
+      `¡Ahora empieza tu cambio!\n\n` +
+      `Aquí tienes los siguientes descargables PDF:\n\n` +
+      `${bulletsText}\n\n` +
+      `Puedes descargarlos todos ellos pulsando el siguiente enlace:\n${downloadLink}\n\n` +
+      `Guárdalos bien en tu móvil, ordenador o imprímelos. Tenlos siempre a mano para que puedas acceder a ellos fácilmente y consigas tus objetivos.\n\n` +
+      `¡Son tu mapa único de transformación!\n\n` +
+      `Un abrazo intergaláctico 🪐\nPhil.`
+    );
+
+    const bulletsHtml = list.map(n => `<li>${n.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</li>`).join('');
+    const link = downloadLink || '#';
+    const bodyHtml = (
+      `<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;white-space:normal;line-height:1.6;font-size:15px;color:#111">` +
+        `<p>¡Hola, ${safeFirst}!</p>` +
+        `<p>Muchísimas gracias por tu confianza :)<br/>¡Ahora empieza tu cambio!</p>` +
+        `<p>Aquí tienes los siguientes descargables PDF:</p>` +
+        `<ul style="margin:0 0 16px 20px;">${bulletsHtml}</ul>` +
+        `<p>Puedes descargarlos todos ellos pulsando el siguiente botón:</p>` +
+        `<p><a href="${link}" style="background:#FFC107;color:#000;text-decoration:none;font-weight:700;padding:12px 18px;border-radius:8px;display:inline-block">Descargar ahora</a></p>` +
+        `<p>Guárdalos bien en tu móvil, ordenador o imprímelos. Tenlos siempre a mano para que puedas acceder a ellos fácilmente y consigas tus objetivos.</p>` +
+        `<p>¡Son tu mapa único de transformación!</p>` +
+        `<p>Un abrazo intergaláctico 🪐<br/>Phil.</p>` +
+      `</div>`
+    );
+
+    const boundary = 'alt_' + Date.now();
     const parts = [
       `From: ${encodeHeader('Phil Hugo')} <${GMAIL_SENDER}>`,
       `To: ${to}`,
@@ -76,7 +105,6 @@ export async function sendEmailWithAttachments({ to, subject, text, attachments,
     const baseName = (name || 'Descargable').replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '');
     const prettyName = baseName.replace(/_/g, ' ');
     const safeFirst = (firstName || '').trim() || 'intergaláctic@';
-    // Asunto debe ser UNA línea
     const finalSubject = subject || prettyName;
     const body = text || `¡Hola, ${safeFirst}!\n\nMuchísimas gracias por tu confianza :)\n¡Ahora empieza tu cambio!\n\nAquí tienes tu PDF ${prettyName}.\n\nGuarda bien esta guía en tu móvil, ordenador o imprímela. Tenla siempre a mano para que puedas acceder a ella fácilmente y consigas tus objetivos.\n\n¡Es tu mapa único de transformación!\n\nUn abrazo intergaláctico 🪐\nPhil.`;
 
@@ -137,7 +165,6 @@ export async function sendEmailWithAttachments({ to, subject, text, attachments,
   }
 }
 
-// Compat: wrapper para una sola pieza
 export async function sendEmailWithAttachment({ to, subject, text, attachmentPath, attachmentName }) {
   return sendEmailWithAttachments({
     to,
