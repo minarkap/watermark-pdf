@@ -239,37 +239,43 @@ app.post('/webhook', async (req, res) => {
     const timestamp = purchasedAt || new Date().toISOString();
     const watermarkText = `${fullName} | ${email} | ${timestamp}`;
 
+    // Normalizador para comparar sin acentos y sin sensibilidad a mayúsculas
+    const normalizeTitle = (s) => (s || '').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const titleNorm = normalizeTitle(kajabiOfferTitle || '');
+
     // Mapeo de títulos a carpetas y URLs (igual que en el worker)
     const offerMappings = {
       keto_optimizado: {
-        titles: new Set([
-          'Keto Optimizado',
-          'OFERTA CURSO KETO OPTIMIZADO',
-          'CURSO KETO OPTIMIZADO (UPSELL KETOFAST)',
-          'Test Product',
-          'Bundle Keto Optimizado + Ayuno Experto',
-          'Bundle Keto Optimizado + Video Coaching',
-        ]),
+        match: (t) => normalizeTitle(t).includes('keto optimizado'),
         urls_env: 'KETO_OPTIMIZADO_URLS',
         dir: path.join(__dirname, '..', 'descargables', 'keto_optimizado'),
       },
       keto_fast: {
-        titles: new Set(['Keto-Fast']),
+        match: (t) => {
+          const n = normalizeTitle(t);
+          return n.includes('keto fast') || n.includes('keto-fast');
+        },
         urls_env: 'KETO_FAST_URLS',
         dir: path.join(__dirname, '..', 'descargables', 'keto_fast'),
       },
       ldl_colesterol: {
-        titles: new Set(['LDL Colesterol']),
+        match: (t) => normalizeTitle(t).includes('colesterol'),
         urls_env: 'LDL_COLESTEROL_URLS',
         dir: path.join(__dirname, '..', 'descargables', 'ldl_colesterol'),
       },
       control_apetito: {
-        titles: new Set(['Control Apetito']),
+        match: (t) => {
+          const n = normalizeTitle(t);
+          return n.includes('ebook') && n.includes('control absoluto del apetito');
+        },
         urls_env: 'CONTROL_APETITO_URLS',
         dir: path.join(__dirname, '..', 'descargables', 'control_apetito'),
       },
       analiticas_esenciales: {
-        titles: new Set(['Analíticas esenciales', 'Analiticas esenciales']),
+        match: (t) => {
+          const n = normalizeTitle(t);
+          return n.includes('analiticas esenciales');
+        },
         urls_env: 'ANALITICAS_ESENCIALES_URLS',
         dir: path.join(__dirname, '..', 'descargables', 'analiticas_esenciales'),
       },
@@ -277,7 +283,7 @@ app.post('/webhook', async (req, res) => {
 
     let offerKey = null;
     for (const [key, config] of Object.entries(offerMappings)) {
-      if (kajabiOfferTitle && config.titles.has(kajabiOfferTitle)) {
+      if (kajabiOfferTitle && typeof config.match === 'function' && config.match(kajabiOfferTitle)) {
         offerKey = key;
         break;
       }
@@ -460,37 +466,42 @@ if (pdfQueue && connection) {
       // Copiamos el cuerpo de la función bajo el try { ... } para no duplicar más estructura
       // Nota: mantenemos logs compactos
 
+      // Normalizador para comparar sin acentos y sin sensibilidad a mayúsculas
+      const normalizeTitle = (s) => (s || '').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
       // Mapeo de títulos a carpetas y URLs
       const offerMappings = {
         keto_optimizado: {
-          titles: new Set([
-            'Keto Optimizado',
-            'OFERTA CURSO KETO OPTIMIZADO',
-            'CURSO KETO OPTIMIZADO (UPSELL KETOFAST)',
-            'Test Product',
-            'Bundle Keto Optimizado + Ayuno Experto',
-            'Bundle Keto Optimizado + Video Coaching'
-          ]),
+          match: (t) => normalizeTitle(t).includes('keto optimizado'),
           urls_env: 'KETO_OPTIMIZADO_URLS',
           dir: path.join(__dirname, '..', 'descargables', 'keto_optimizado'),
         },
         keto_fast: {
-          titles: new Set(['Keto-Fast']),
+          match: (t) => {
+            const n = normalizeTitle(t);
+            return n.includes('keto fast') || n.includes('keto-fast');
+          },
           urls_env: 'KETO_FAST_URLS',
           dir: path.join(__dirname, '..', 'descargables', 'keto_fast'),
         },
         ldl_colesterol: {
-          titles: new Set(['LDL Colesterol']),
+          match: (t) => normalizeTitle(t).includes('colesterol'),
           urls_env: 'LDL_COLESTEROL_URLS',
           dir: path.join(__dirname, '..', 'descargables', 'ldl_colesterol'),
         },
         control_apetito: {
-          titles: new Set(['Control Apetito']),
+          match: (t) => {
+            const n = normalizeTitle(t);
+            return n.includes('ebook') && n.includes('control absoluto del apetito');
+          },
           urls_env: 'CONTROL_APETITO_URLS',
           dir: path.join(__dirname, '..', 'descargables', 'control_apetito'),
         },
         analiticas_esenciales: {
-          titles: new Set(['Analíticas esenciales', 'Analiticas esenciales']),
+          match: (t) => {
+            const n = normalizeTitle(t);
+            return n.includes('analiticas esenciales');
+          },
           urls_env: 'ANALITICAS_ESENCIALES_URLS',
           dir: path.join(__dirname, '..', 'descargables', 'analiticas_esenciales'),
         }
@@ -498,7 +509,7 @@ if (pdfQueue && connection) {
       
       let offerKey = null;
       for (const [key, config] of Object.entries(offerMappings)) {
-        if (kajabiOfferTitle && config.titles.has(kajabiOfferTitle)) {
+        if (kajabiOfferTitle && typeof config.match === 'function' && config.match(kajabiOfferTitle)) {
           offerKey = key;
           break;
         }
