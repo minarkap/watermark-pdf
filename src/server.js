@@ -28,12 +28,17 @@ if (REDIS_URL) {
   connection = { url: REDIS_URL, maxRetriesPerRequest: null, enableReadyCheck: false };
   try {
     pdfQueue = new Queue('pdf-jobs', { connection });
+    console.log('[QUEUE] BullMQ activo con Redis');
   } catch (e) {
     console.warn('[QUEUE] No se pudo inicializar Redis/BullMQ, usando fallback inline:', e?.message);
     pdfQueue = null;
     connection = null;
   }
+} else {
+  console.log('[QUEUE] Sin REDIS_URL: ejecutando inline');
 }
+
+const VERBOSE = process.env.LOG_VERBOSE === 'true';
 
 // Comprime un PDF si supera cierto umbral (bytes). Devuelve la ruta del archivo a usar finalmente.
 async function compressIfTooLarge(inputPath, maxBytes = 17 * 1024 * 1024) {
@@ -246,6 +251,7 @@ app.post('/webhook', async (req, res) => {
   // Soportar payload de Kajabi: puede venir como array de eventos
   const bodyRaw = req.body || {};
   const body = Array.isArray(bodyRaw) ? (bodyRaw[0] || {}) : bodyRaw;
+  if (VERBOSE) console.log('[WEBHOOK] recibido', JSON.stringify(body).slice(0, 500));
   if (Array.isArray(bodyRaw)) {
     if (!validateKajabi(body)) return res.status(400).json({ error: 'Payload Kajabi inválido' });
   } else {
@@ -278,6 +284,7 @@ app.post('/webhook', async (req, res) => {
       removeOnComplete: true,
       removeOnFail: { count: 10 },
     });
+    if (VERBOSE) console.log('[QUEUE] job encolado', jobId);
     return; // devolvemos respuesta arriba; el worker procesará
   }
 
@@ -498,6 +505,7 @@ if (pdfQueue && connection) {
       'pdf-jobs',
       async (job) => {
       const { fullName, email, purchasedAt, kajabiOfferTitle, firstName } = job.data || {};
+      if (VERBOSE) console.log('[WORKER] procesando job');
       const timestamp = purchasedAt || new Date().toISOString();
       const watermarkText = `${fullName} | ${email} | ${timestamp}`;
 
@@ -700,6 +708,7 @@ if (pdfQueue && connection) {
     },
     { connection, concurrency: 1 }
   );
+  console.log('[WORKER] iniciado');
   } catch (e) {
     console.warn('[QUEUE] Worker no iniciado, usando fallback inline:', e?.message);
   }
