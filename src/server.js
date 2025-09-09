@@ -11,7 +11,7 @@ import { PDFDocument } from 'pdf-lib';
 import { createHash } from 'crypto';
 import { exec as execCb } from 'child_process';
 import { promisify } from 'util';
-import { Queue, Worker } from 'bullmq';
+import { Queue, Worker, QueueEvents } from 'bullmq';
 import Ajv from 'ajv';
 import archiver from 'archiver';
 import { Agent as UndiciAgent, setGlobalDispatcher } from 'undici';
@@ -277,14 +277,14 @@ app.post('/webhook', async (req, res) => {
 
   if (pdfQueue) {
     const jobId = `${email}:${purchasedAt || ''}:${kajabiOfferTitle || ''}`;
-    await pdfQueue.add('process', jobPayload, {
+    const job = await pdfQueue.add('process', jobPayload, {
       jobId,
       attempts: 3,
       backoff: { type: 'exponential', delay: 30000 },
       removeOnComplete: true,
       removeOnFail: { count: 10 },
     });
-    if (VERBOSE) console.log('[QUEUE] job encolado', jobId);
+    console.log('[QUEUE] job encolado', jobId, '-> id', job?.id);
     return; // devolvemos respuesta arriba; el worker procesará
   }
 
@@ -500,6 +500,11 @@ app.post('/webhook', async (req, res) => {
 // Worker (si hay Redis) – procesa en el mismo contenedor
 if (pdfQueue && connection) {
   try {
+    const queueEvents = new QueueEvents('pdf-jobs', { connection });
+    queueEvents.on('waiting', ({ jobId }) => console.log('[QUEUE] waiting', jobId));
+    queueEvents.on('active', ({ jobId }) => console.log('[QUEUE] active', jobId));
+    queueEvents.on('completed', ({ jobId }) => console.log('[QUEUE] completed', jobId));
+    queueEvents.on('failed', ({ jobId, failedReason }) => console.error('[QUEUE] failed', jobId, failedReason));
     // eslint-disable-next-line no-new
     new Worker(
       'pdf-jobs',
