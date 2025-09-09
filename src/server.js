@@ -136,6 +136,23 @@ async function downloadPdfWithDriveSupport(urlString) {
 dotenv.config();
 console.log('Boot OK');
 
+// Manejo global de ECONNRESET/AbortError para evitar ruido
+process.on('uncaughtException', (err) => {
+  if (err && (err.code === 'ECONNRESET' || err.name === 'AbortError')) {
+    console.warn('[NET] Ignorado uncaughtException:', err.code || err.name);
+    return;
+  }
+  console.error('[FATAL] uncaughtException', err);
+});
+process.on('unhandledRejection', (reason) => {
+  const err = reason instanceof Error ? reason : null;
+  if (err && (err.code === 'ECONNRESET' || err.name === 'AbortError')) {
+    console.warn('[NET] Ignorado unhandledRejection:', err.code || err.name);
+    return;
+  }
+  console.error('[FATAL] unhandledRejection', reason);
+});
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
