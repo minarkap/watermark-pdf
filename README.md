@@ -119,3 +119,32 @@ curl -s https://<tu-app>.up.railway.app/health
 - 502 en Railway: asegúrate de no fijar `PORT`; el contenedor debe escuchar en el puerto inyectado.
 - Emails no llegan: seguramente por tamaño. Revisa logs; el servicio divide en varios correos y comprime si es necesario.
 - PDFs con refs inválidas/emoji: el pipeline usa DejaVu y sanitiza con Ghostscript; además reescribe páginas con pdf-lib.
+
+## Ejemplo de .env
+
+```
+# Gmail API
+GMAIL_CLIENT_ID=
+GMAIL_CLIENT_SECRET=
+GMAIL_REDIRECT_URI=https://developers.google.com/oauthplayground
+GMAIL_REFRESH_TOKEN=
+GMAIL_SENDER=hello@intergalactic.plus
+
+# Redis (opcional para BullMQ)
+REDIS_URL=
+
+# Packs por URLs de Drive (JSON en una sola línea)
+KETO_OPTIMIZADO_URLS=[]
+KETO_FAST_URLS=[]
+LDL_COLESTEROL_URLS=[]
+CONTROL_APETITO_URLS=[]
+ANALITICAS_ESENCIALES_URLS=[]
+
+# Procesamiento
+ENABLE_GS=true
+ENABLE_QPDF=true
+BANNER_DPI=200
+
+# Público (opcional para generar enlaces)
+PUBLIC_BASE_URL=
+```
