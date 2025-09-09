@@ -17,26 +17,6 @@ const oAuth2Client = new google.auth.OAuth2(
 
 oAuth2Client.setCredentials({ refresh_token: GMAIL_REFRESH_TOKEN });
 
-async function gmailSendRaw(gmail, raw) {
-  const attempts = [0, 1000, 3000];
-  let lastErr;
-  for (let i = 0; i < attempts.length; i++) {
-    if (attempts[i] > 0) await new Promise(r => setTimeout(r, attempts[i]));
-    try {
-      const result = await gmail.users.messages.send({ userId: 'me', requestBody: { raw } });
-      return result;
-    } catch (e) {
-      lastErr = e;
-      const code = e?.code || e?.errors?.[0]?.reason || '';
-      if (code === 'ECONNRESET' || code === 'ETIMEDOUT' || (e?.message || '').includes('socket') || (e?.message || '').includes('aborted')) {
-        continue; // retry
-      }
-      throw e;
-    }
-  }
-  throw lastErr;
-}
-
 export async function sendEmailWithAttachments({ to, subject, text, attachments, firstName, downloadLink, names }) {
   console.log(`[MAIL] Envío a ${to} con ${attachments?.length || 0} adj.`);
   const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
@@ -108,7 +88,10 @@ export async function sendEmailWithAttachments({ to, subject, text, attachments,
       .replace(/\//g, '_')
       .replace(/=+$/, '');
 
-    const result = await gmailSendRaw(gmail, encodedMessage);
+    const result = await gmail.users.messages.send({
+      userId: 'me',
+      requestBody: { raw: encodedMessage },
+    });
     console.log(`[MAIL] OK sin adjuntos id=${result?.data?.id}`);
     return;
   }
@@ -174,7 +157,10 @@ export async function sendEmailWithAttachments({ to, subject, text, attachments,
       .replace(/\//g, '_')
       .replace(/=+$/, '');
 
-    const result = await gmailSendRaw(gmail, encodedMessage);
+    const result = await gmail.users.messages.send({
+      userId: 'me',
+      requestBody: { raw: encodedMessage },
+    });
     console.log(`[MAIL] OK ${idx}/${attachments.length} id=${result?.data?.id}`);
   }
 }
