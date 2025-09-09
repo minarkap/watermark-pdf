@@ -91,27 +91,46 @@ function extractDriveIdFromUrl(urlString) {
 }
 
 async function downloadPdfWithDriveSupport(urlString) {
-  const tryFetch = async (u) => {
-    const resp = await fetch(u, { redirect: 'follow' });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const arrayBuffer = await resp.arrayBuffer();
-    const buf = Buffer.from(arrayBuffer);
-    const ct = resp.headers.get('content-type') || '';
-    if (ct.startsWith('application/pdf') || buf.slice(0, 5).toString() === '%PDF-') return buf;
-    return null;
+  const tryFetch = async (u, timeoutMs = 20000) => {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const resp = await fetch(u, { redirect: 'follow', signal: controller.signal });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const arrayBuffer = await resp.arrayBuffer();
+      const buf = Buffer.from(arrayBuffer);
+      const ct = resp.headers.get('content-type') || '';
+      if (ct.startsWith('application/pdf') || buf.slice(0, 5).toString() === '%PDF-') return buf;
+      return null;
+    } finally {
+      clearTimeout(t);
+    }
   };
 
-  let buf = await tryFetch(urlString);
-  if (buf) return buf;
-
-  const id = extractDriveIdFromUrl(urlString);
-  if (id) {
-    const alt = `https://drive.usercontent.google.com/uc?export=download&id=${id}`;
-    buf = await tryFetch(alt);
-    if (buf) return buf;
+  // Reintentos con backoff
+  const attempts = [0, 750, 2000];
+  let lastErr = null;
+  for (let i = 0; i < attempts.length; i++) {
+    if (attempts[i] > 0) await sleep(attempts[i]);
+    try {
+      let buf = await tryFetch(urlString);
+      if (buf) return buf;
+      const id = extractDriveIdFromUrl(urlString);
+      if (id) {
+        const alt = `https://drive.usercontent.google.com/uc?export=download&id=${id}`;
+        buf = await tryFetch(alt);
+        if (buf) return buf;
+      }
+      lastErr = new Error('Respuesta no PDF');
+    } catch (e) {
+      lastErr = e;
+      // Reintentar ante abortos o resets
+      if (String(e?.code).includes('ECONNRESET') || e?.name === 'AbortError') {
+        continue;
+      }
+    }
   }
-
-  throw new Error('Contenido descargado no parece ser PDF (Google Drive puede requerir confirmación). Usa enlaces directos de drive.usercontent.');
+  throw new Error('Contenido descargado no parece ser PDF (puede requerir confirmación). Usa enlaces directos de drive.usercontent. Último error: ' + (lastErr?.message || lastErr));
 }
 
 dotenv.config();
@@ -127,6 +146,9 @@ app.use(express.json({ limit: '2mb' }));
 const downloadTokens = new Map(); // token -> { path, expiresAt, filename }
 const ZIP_TTL_MS = 1000 * 60 * 60 * 48; // 48h
 
+// Utilidad: sleep
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 app.get('/download/:token', async (req, res) => {
   try {
     const token = req.params.token;
@@ -137,7 +159,12 @@ app.get('/download/:token', async (req, res) => {
       downloadTokens.delete(token);
       return res.status(410).send('Link expirado');
     }
-    return res.download(entry.path, entry.filename || 'descargables.zip');
+    return res.download(entry.path, entry.filename || 'descargables.zip', (err) => {
+      if (!err) return;
+      // Ignorar abortos del cliente
+      if (err.code === 'ECONNRESET') return;
+      try { res.status(500).end('Error de descarga'); } catch {}
+    });
   } catch {
     res.status(500).send('Error de descarga');
   }
@@ -250,6 +277,11 @@ app.post('/webhook', async (req, res) => {
         urls_env: 'KETO_OPTIMIZADO_URLS',
         dir: path.join(__dirname, '..', 'descargables', 'keto_optimizado'),
       },
+      bonus_ko: {
+        match: (t) => normalizeTitle(t).includes('keto optimizado'),
+        urls_env: 'BONUS_KO_URLS',
+        dir: path.join(__dirname, '..', 'descargables', 'bonus_ko'),
+      },
       keto_fast: {
         match: (t) => {
           const n = normalizeTitle(t);
@@ -281,111 +313,111 @@ app.post('/webhook', async (req, res) => {
       },
     };
 
-    let offerKey = null;
-    for (const [key, config] of Object.entries(offerMappings)) {
-      if (kajabiOfferTitle && typeof config.match === 'function' && config.match(kajabiOfferTitle)) {
-        offerKey = key;
-        break;
-      }
-    }
+    // Permitir múltiples packs por título
+    const matchedConfigs = Object.entries(offerMappings)
+      .filter(([_, cfg]) => kajabiOfferTitle && typeof cfg.match === 'function' && cfg.match(kajabiOfferTitle))
+      .map(([key, cfg]) => ({ key, ...cfg }));
 
     const outputs = [];
-    if (offerKey) {
-      const config = offerMappings[offerKey];
-      console.log(`[FLOW] Oferta '${offerKey}' detectada. Procesando...`);
-      let filesToProcess = [];
+    if (matchedConfigs.length > 0) {
+      for (const config of matchedConfigs) {
+        console.log(`[FLOW] Oferta '${config.key}' detectada. Procesando...`);
+        let filesToProcess = [];
 
-      try {
-        const entries = await fs.readdir(config.dir, { withFileTypes: true });
-        const pdfFiles = entries.filter(e => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).map(e => ({
-          name: e.name,
-          path: path.join(config.dir, e.name),
-          source: 'local'
-        }));
-        if (pdfFiles.length > 0) filesToProcess = pdfFiles;
-      } catch (e) {
-        if (e?.code !== 'ENOENT') throw e;
-      }
+        try {
+          const entries = await fs.readdir(config.dir, { withFileTypes: true });
+          const pdfFiles = entries.filter(e => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).map(e => ({
+            name: e.name,
+            path: path.join(config.dir, e.name),
+            source: 'local'
+          }));
+          if (pdfFiles.length > 0) filesToProcess = pdfFiles;
+        } catch (e) {
+          if (e?.code !== 'ENOENT') throw e;
+        }
 
-      if (filesToProcess.length === 0) {
-        const urlsJson = process.env[config.urls_env];
-        if (urlsJson) {
-          try {
-            const list = JSON.parse(urlsJson);
-            if (Array.isArray(list) && list.length > 0) {
-              filesToProcess = list.map(item => ({
-                name: item.name,
-                url: item.url,
-                source: 'remote'
-              }));
+        if (filesToProcess.length === 0) {
+          const urlsJson = process.env[config.urls_env];
+          if (urlsJson) {
+            try {
+              const list = JSON.parse(urlsJson);
+              if (Array.isArray(list) && list.length > 0) {
+                filesToProcess = list.map(item => ({
+                  name: item.name,
+                  url: item.url,
+                  source: 'remote'
+                }));
+              }
+            } catch {
+              throw new Error(`${config.urls_env} no es un JSON válido`);
             }
-          } catch {
-            throw new Error(`${config.urls_env} no es un JSON válido`);
           }
         }
-      }
 
-      if (filesToProcess.length === 0) {
-        throw new Error(`No se encontraron PDFs locales ni URLs para la oferta '${offerKey}'`);
-      }
-
-      console.log(`[FLOW] Procesando ${filesToProcess.length} PDFs...`);
-      for (const file of filesToProcess) {
-        try {
-          console.log(`[FLOW] - ${file.name} (${file.source})`);
-          let bytes;
-          if (file.source === 'local') {
-            bytes = await fs.readFile(file.path);
-          } else {
-            bytes = await downloadPdfWithDriveSupport(file.url);
-            if (bytes.slice(0, 5).toString() !== '%PDF-') {
-              throw new Error('Contenido descargado no parece ser PDF (sin cabecera %PDF-)');
-            }
-            await fs.mkdir(config.dir, { recursive: true });
-            const dlPath = path.join(config.dir, file.name);
-            await fs.writeFile(dlPath, bytes);
-            bytes = await fs.readFile(dlPath);
-          }
-          
-          if (process.env.ENABLE_GS !== 'false') {
-            try {
-              const tmpDir = path.join(__dirname, '..', 'tmp');
-              await fs.mkdir(tmpDir, { recursive: true });
-              const inPath = path.join(tmpDir, `in_${Date.now()}.pdf`);
-              const outPath = path.join(tmpDir, `gs_out_${Date.now()}.pdf`);
-              await fs.writeFile(inPath, bytes);
-              await exec(`gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.6 -sOutputFile=${outPath} -f ${inPath} | cat`);
-              bytes = await fs.readFile(outPath);
-            } catch {}
-          }
-          if (process.env.ENABLE_QPDF !== 'false') {
-            try {
-              const tmpDir = path.join(__dirname, '..', 'tmp');
-              const inPath = path.join(tmpDir, `in_${Date.now()}.pdf`);
-              const outPath = path.join(tmpDir, `qpdf_out_${Date.now()}.pdf`);
-              await fs.writeFile(inPath, bytes);
-              await exec(`qpdf --linearize --stream-data=preserve --recompress-flate --object-streams=preserve --qdf ${inPath} ${outPath} | cat`);
-              bytes = await fs.readFile(outPath);
-            } catch {}
-          }
-          bytes = await normalizeWithPdfLib(bytes);
-          let pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
-          await applyCentralWatermark(pdfDoc, watermarkText);
-          const watermarkedBytes = await pdfDoc.save();
-          const documentHash = createHash('sha256').update(watermarkedBytes).digest('hex');
-          pdfDoc = await PDFDocument.load(watermarkedBytes);
-          await addSecurityFeatures(pdfDoc, watermarkText, documentHash);
-          const finalBytes = await pdfDoc.save();
-    const tmpDir = path.join(__dirname, '..', 'tmp');
-    await fs.mkdir(tmpDir, { recursive: true });
-          const outName = file.name.replace(/\.pdf$/i, `_${Date.now()}.pdf`);
-          const outPath = path.join(tmpDir, outName);
-          await fs.writeFile(outPath, finalBytes);
-          const sendPath = await compressIfTooLarge(outPath);
-          outputs.push({ path: sendPath, name: path.basename(sendPath) });
-        } catch (fileErr) {
-          console.error(`[FLOW] Error procesando ${file.name}:`, fileErr?.message);
+        if (filesToProcess.length === 0) {
+          console.warn(`No se encontraron PDFs para '${config.key}'`);
           continue;
+        }
+
+        console.log(`[FLOW] Procesando ${filesToProcess.length} PDFs...`);
+        for (const file of filesToProcess) {
+          try {
+            console.log(`[FLOW] - ${file.name} (${file.source})`);
+            let bytes;
+            if (file.source === 'local') {
+              bytes = await fs.readFile(file.path);
+            } else {
+              bytes = await downloadPdfWithDriveSupport(file.url);
+              if (bytes.slice(0, 5).toString() !== '%PDF-') {
+                throw new Error('Contenido descargado no parece ser PDF (sin cabecera %PDF-)');
+              }
+              await fs.mkdir(config.dir, { recursive: true });
+              const dlPath = path.join(config.dir, file.name);
+              await fs.writeFile(dlPath, bytes);
+              // Leer desde disco a partir de aquí para unificar flujo
+              bytes = await fs.readFile(dlPath);
+            }
+            
+            if (process.env.ENABLE_GS !== 'false') {
+              try {
+                const tmpDir = path.join(__dirname, '..', 'tmp');
+                await fs.mkdir(tmpDir, { recursive: true });
+                const inPath = path.join(tmpDir, `in_${Date.now()}.pdf`);
+                const outPath = path.join(tmpDir, `gs_out_${Date.now()}.pdf`);
+                await fs.writeFile(inPath, bytes);
+                await exec(`gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.6 -sOutputFile=${outPath} -f ${inPath} | cat`);
+                bytes = await fs.readFile(outPath);
+              } catch {}
+            }
+            if (process.env.ENABLE_QPDF !== 'false') {
+              try {
+                const tmpDir = path.join(__dirname, '..', 'tmp');
+                const inPath = path.join(tmpDir, `in_${Date.now()}.pdf`);
+                const outPath = path.join(tmpDir, `qpdf_out_${Date.now()}.pdf`);
+                await fs.writeFile(inPath, bytes);
+                await exec(`qpdf --linearize --stream-data=preserve --recompress-flate --object-streams=preserve --qdf ${inPath} ${outPath} | cat`);
+                bytes = await fs.readFile(outPath);
+              } catch {}
+            }
+            bytes = await normalizeWithPdfLib(bytes);
+            let pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
+            await applyCentralWatermark(pdfDoc, watermarkText);
+            const watermarkedBytes = await pdfDoc.save();
+            const documentHash = createHash('sha256').update(watermarkedBytes).digest('hex');
+            pdfDoc = await PDFDocument.load(watermarkedBytes);
+            await addSecurityFeatures(pdfDoc, watermarkText, documentHash);
+            const finalBytes = await pdfDoc.save();
+            const tmpDir = path.join(__dirname, '..', 'tmp');
+            await fs.mkdir(tmpDir, { recursive: true });
+            const outName = file.name.replace(/\.pdf$/i, `_${Date.now()}.pdf`);
+            const outPath = path.join(tmpDir, outName);
+            await fs.writeFile(outPath, finalBytes);
+            const sendPath = await compressIfTooLarge(outPath);
+            outputs.push({ path: sendPath, name: path.basename(sendPath) });
+          } catch (fileErr) {
+            console.error(`[FLOW] Error procesando ${file.name}:`, fileErr?.message);
+            continue;
+          }
         }
       }
     } else {
@@ -462,6 +494,11 @@ if (pdfQueue && connection) {
           urls_env: 'KETO_OPTIMIZADO_URLS',
           dir: path.join(__dirname, '..', 'descargables', 'keto_optimizado'),
         },
+        bonus_ko: {
+          match: (t) => normalizeTitle(t).includes('keto optimizado'),
+          urls_env: 'BONUS_KO_URLS',
+          dir: path.join(__dirname, '..', 'descargables', 'bonus_ko'),
+        },
         keto_fast: {
           match: (t) => {
             const n = normalizeTitle(t);
@@ -492,119 +529,116 @@ if (pdfQueue && connection) {
           dir: path.join(__dirname, '..', 'descargables', 'analiticas_esenciales'),
         }
       };
-      
-      let offerKey = null;
-      for (const [key, config] of Object.entries(offerMappings)) {
-        if (kajabiOfferTitle && typeof config.match === 'function' && config.match(kajabiOfferTitle)) {
-          offerKey = key;
-          break;
-        }
-      }
+
+      const matchedConfigs = Object.entries(offerMappings)
+        .filter(([_, cfg]) => kajabiOfferTitle && typeof cfg.match === 'function' && cfg.match(kajabiOfferTitle))
+        .map(([key, cfg]) => ({ key, ...cfg }));
 
       const outputs = [];
-      if (offerKey) {
-        const config = offerMappings[offerKey];
-        console.log(`[FLOW] Oferta '${offerKey}' detectada. Procesando...`);
-        let filesToProcess = [];
+      if (matchedConfigs.length) {
+        for (const config of matchedConfigs) {
+          console.log(`[FLOW] Oferta '${config.key}' detectada. Procesando...`);
+          let filesToProcess = [];
 
-        try {
-          const entries = await fs.readdir(config.dir, { withFileTypes: true });
-          const pdfFiles = entries.filter(e => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).map(e => ({
-            name: e.name,
-            path: path.join(config.dir, e.name),
-            source: 'local'
-          }));
-          if (pdfFiles.length > 0) filesToProcess = pdfFiles;
-        } catch (e) {
-          if (e?.code !== 'ENOENT') throw e;
-        }
+          try {
+            const entries = await fs.readdir(config.dir, { withFileTypes: true });
+            const pdfFiles = entries.filter(e => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).map(e => ({
+              name: e.name,
+              path: path.join(config.dir, e.name),
+              source: 'local'
+            }));
+            if (pdfFiles.length > 0) filesToProcess = pdfFiles;
+          } catch (e) {
+            if (e?.code !== 'ENOENT') throw e;
+          }
 
-        if (filesToProcess.length === 0) {
-          const urlsJson = process.env[config.urls_env];
-          if (urlsJson) {
-            try {
-              const list = JSON.parse(urlsJson);
-              if (Array.isArray(list) && list.length > 0) {
-                filesToProcess = list.map(item => ({
-                  name: item.name,
-                  url: item.url,
-                  source: 'remote'
-                }));
+          if (filesToProcess.length === 0) {
+            const urlsJson = process.env[config.urls_env];
+            if (urlsJson) {
+              try {
+                const list = JSON.parse(urlsJson);
+                if (Array.isArray(list) && list.length > 0) {
+                  filesToProcess = list.map(item => ({
+                    name: item.name,
+                    url: item.url,
+                    source: 'remote'
+                  }));
+                }
+              } catch {
+                throw new Error(`${config.urls_env} no es un JSON válido`);
               }
-            } catch {
-              throw new Error(`${config.urls_env} no es un JSON válido`);
             }
           }
-        }
-        
-        if (filesToProcess.length === 0) {
-          throw new Error(`No se encontraron PDFs locales ni URLs para la oferta '${offerKey}'`);
-        }
-
-        console.log(`[FLOW] Procesando ${filesToProcess.length} PDFs...`);
-        for (const file of filesToProcess) {
-          try {
-            console.log(`[FLOW] - ${file.name} (${file.source})`);
-            let bytes;
-            if (file.source === 'local') {
-              bytes = await fs.readFile(file.path);
-            } else {
-              bytes = await downloadPdfWithDriveSupport(file.url);
-              // Validar PDF y persistir en carpeta
-              if (bytes.slice(0, 5).toString() !== '%PDF-') {
-                throw new Error('Contenido descargado no parece ser PDF (sin cabecera %PDF-)');
-              }
-              await fs.mkdir(config.dir, { recursive: true });
-              const dlPath = path.join(config.dir, file.name);
-              await fs.writeFile(dlPath, bytes);
-              // Leer desde disco a partir de aquí para unificar flujo
-              bytes = await fs.readFile(dlPath);
-            }
-            
-            // Saneado y normalización
-            if (process.env.ENABLE_GS !== 'false') {
-              try {
-                const tmpDir = path.join(__dirname, '..', 'tmp');
-                await fs.mkdir(tmpDir, { recursive: true });
-                const inPath = path.join(tmpDir, `in_${Date.now()}.pdf`);
-                const outPath = path.join(tmpDir, `gs_out_${Date.now()}.pdf`);
-                await fs.writeFile(inPath, bytes);
-                await exec(`gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.6 -sOutputFile=${outPath} -f ${inPath} | cat`);
-                bytes = await fs.readFile(outPath);
-              } catch {}
-            }
-            if (process.env.ENABLE_QPDF !== 'false') {
-              try {
-                const tmpDir = path.join(__dirname, '..', 'tmp');
-                const inPath = path.join(tmpDir, `in_${Date.now()}.pdf`);
-                const outPath = path.join(tmpDir, `qpdf_out_${Date.now()}.pdf`);
-                await fs.writeFile(inPath, bytes);
-                await exec(`qpdf --linearize --stream-data=preserve --recompress-flate --object-streams=preserve --qdf ${inPath} ${outPath} | cat`);
-                bytes = await fs.readFile(outPath);
-              } catch {}
-            }
-            bytes = await normalizeWithPdfLib(bytes);
-
-            // Watermarking
-            let pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
-            await applyCentralWatermark(pdfDoc, watermarkText);
-            const watermarkedBytes = await pdfDoc.save();
-            const documentHash = createHash('sha256').update(watermarkedBytes).digest('hex');
-            pdfDoc = await PDFDocument.load(watermarkedBytes);
-            await addSecurityFeatures(pdfDoc, watermarkText, documentHash);
-            const finalBytes = await pdfDoc.save();
-            
-            // Guardado y compresión
-            const tmpDir = path.join(__dirname, '..', 'tmp');
-            await fs.mkdir(tmpDir, { recursive: true });
-            const outName = file.name.replace(/\.pdf$/i, `_${Date.now()}.pdf`);
-            const outPath = path.join(tmpDir, outName);
-            await fs.writeFile(outPath, finalBytes);
-            const sendPath = await compressIfTooLarge(outPath);
-            outputs.push({ path: sendPath, name: path.basename(sendPath) });
-          } catch (fileErr) {
-            console.error(`[FLOW] Error procesando ${file.name}:`, fileErr?.message);
+          
+          if (!filesToProcess.length) {
+            console.warn(`No se encontraron PDFs para '${config.key}'`);
             continue;
+          }
+
+          console.log(`[FLOW] Procesando ${filesToProcess.length} PDFs...`);
+          for (const file of filesToProcess) {
+            try {
+              console.log(`[FLOW] - ${file.name} (${file.source})`);
+              let bytes;
+              if (file.source === 'local') {
+                bytes = await fs.readFile(file.path);
+              } else {
+                bytes = await downloadPdfWithDriveSupport(file.url);
+                if (bytes.slice(0, 5).toString() !== '%PDF-') {
+                  throw new Error('Contenido descargado no parece ser PDF (sin cabecera %PDF-)');
+                }
+                await fs.mkdir(config.dir, { recursive: true });
+                const dlPath = path.join(config.dir, file.name);
+                await fs.writeFile(dlPath, bytes);
+                // Leer desde disco a partir de aquí para unificar flujo
+                bytes = await fs.readFile(dlPath);
+              }
+              
+              // Saneado y normalización
+              if (process.env.ENABLE_GS !== 'false') {
+                try {
+                  const tmpDir = path.join(__dirname, '..', 'tmp');
+                  await fs.mkdir(tmpDir, { recursive: true });
+                  const inPath = path.join(tmpDir, `in_${Date.now()}.pdf`);
+                  const outPath = path.join(tmpDir, `gs_out_${Date.now()}.pdf`);
+                  await fs.writeFile(inPath, bytes);
+                  await exec(`gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.6 -sOutputFile=${outPath} -f ${inPath} | cat`);
+                  bytes = await fs.readFile(outPath);
+                } catch {}
+              }
+              if (process.env.ENABLE_QPDF !== 'false') {
+                try {
+                  const tmpDir = path.join(__dirname, '..', 'tmp');
+                  const inPath = path.join(tmpDir, `in_${Date.now()}.pdf`);
+                  const outPath = path.join(tmpDir, `qpdf_out_${Date.now()}.pdf`);
+                  await fs.writeFile(inPath, bytes);
+                  await exec(`qpdf --linearize --stream-data=preserve --recompress-flate --object-streams=preserve --qdf ${inPath} ${outPath} | cat`);
+                  bytes = await fs.readFile(outPath);
+                } catch {}
+              }
+              bytes = await normalizeWithPdfLib(bytes);
+
+              // Watermarking
+              let pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
+              await applyCentralWatermark(pdfDoc, watermarkText);
+              const watermarkedBytes = await pdfDoc.save();
+              const documentHash = createHash('sha256').update(watermarkedBytes).digest('hex');
+              pdfDoc = await PDFDocument.load(watermarkedBytes);
+              await addSecurityFeatures(pdfDoc, watermarkText, documentHash);
+              const finalBytes = await pdfDoc.save();
+              
+              // Guardado y compresión
+              const tmpDir = path.join(__dirname, '..', 'tmp');
+              await fs.mkdir(tmpDir, { recursive: true });
+              const outName = file.name.replace(/\.pdf$/i, `_${Date.now()}.pdf`);
+              const outPath = path.join(tmpDir, outName);
+              await fs.writeFile(outPath, finalBytes);
+              const sendPath = await compressIfTooLarge(outPath);
+              outputs.push({ path: sendPath, name: path.basename(sendPath) });
+            } catch (fileErr) {
+              console.error(`[FLOW] Error procesando ${file.name}:`, fileErr?.message);
+              continue;
+            }
           }
         }
       } else {
