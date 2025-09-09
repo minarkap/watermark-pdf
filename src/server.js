@@ -140,20 +140,10 @@ async function downloadPdfWithDriveSupport(urlString) {
 dotenv.config();
 console.log('Boot OK');
 
-// Silenciar ECONNRESET opcionalmente
-if (process.env.SILENCE_NET_RESETS === 'true') {
-  const origError = console.error;
-  console.error = (...args) => {
-    const hasReset = args.some(a => (typeof a === 'object' && a && (a.code === 'ECONNRESET' || a.name === 'AbortError')) || (typeof a === 'string' && a.includes('ECONNRESET')));
-    if (hasReset) return;
-    origError(...args);
-  };
-}
-
-// Manejo global de ECONNRESET/AbortError para evitar ruido
+// Manejo global de ECONNRESET/AbortError con logging visible
 process.on('uncaughtException', (err) => {
   if (err && (err.code === 'ECONNRESET' || err.name === 'AbortError')) {
-    console.warn('[NET] Ignorado uncaughtException:', err.code || err.name);
+    console.warn('[NET] uncaughtException:', err.code || err.name, err.stack || err);
     return;
   }
   console.error('[FATAL] uncaughtException', err);
@@ -161,7 +151,7 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason) => {
   const err = reason instanceof Error ? reason : null;
   if (err && (err.code === 'ECONNRESET' || err.name === 'AbortError')) {
-    console.warn('[NET] Ignorado unhandledRejection:', err.code || err.name);
+    console.warn('[NET] unhandledRejection:', err.code || err.name, err.stack || err);
     return;
   }
   console.error('[FATAL] unhandledRejection', reason);
