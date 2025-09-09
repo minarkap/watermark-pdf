@@ -259,7 +259,7 @@ app.post('/webhook', async (req, res) => {
       return res.status(400).json({ error: 'Payload inválido' });
     }
   }
-  const kajabiOfferTitle = body?.offer?.title;
+  const kajabiOfferTitle = body?.offer?.title || body?.order?.order_items?.[0]?.title || body?.title;
   const fullName = body?.member?.name || (body?.member?.first_name && body?.member?.last_name ? `${body.member.first_name} ${body.member.last_name}` : body?.fullName);
   const email = body?.member?.email || body?.email;
   const purchasedAt = body?.payment_transaction?.created_at || body?.purchasedAt;
@@ -563,6 +563,8 @@ if (pdfQueue && connection) {
         .filter(([_, cfg]) => kajabiOfferTitle && typeof cfg.match === 'function' && cfg.match(kajabiOfferTitle))
         .map(([key, cfg]) => ({ key, ...cfg }));
 
+      if (VERBOSE) console.log('[WORKER] packs coincidentes:', matchedConfigs.map(m => m.key));
+
       const outputs = [];
       if (matchedConfigs.length) {
         for (const config of matchedConfigs) {
@@ -606,6 +608,7 @@ if (pdfQueue && connection) {
 
           console.log(`[FLOW] Procesando ${filesToProcess.length} PDFs...`);
           for (const file of filesToProcess) {
+            if (VERBOSE) console.log('[FLOW] preparando', file);
             try {
               console.log(`[FLOW] - ${file.name} (${file.source})`);
               let bytes;
@@ -666,6 +669,7 @@ if (pdfQueue && connection) {
               outputs.push({ path: sendPath, name: path.basename(sendPath) });
             } catch (fileErr) {
               console.error(`[FLOW] Error procesando ${file.name}:`, fileErr?.message);
+              if (VERBOSE) console.error(fileErr);
               continue;
             }
           }
