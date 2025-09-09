@@ -14,7 +14,11 @@ import { promisify } from 'util';
 import { Queue, Worker } from 'bullmq';
 import Ajv from 'ajv';
 import archiver from 'archiver';
+import { Agent as UndiciAgent, setGlobalDispatcher } from 'undici';
 const exec = promisify(execCb);
+
+// Optimizar conexiones HTTP (fetch) con keep-alive
+setGlobalDispatcher(new UndiciAgent({ keepAliveTimeout: 30_000, keepAliveMaxTimeout: 30_000 }));
 
 // Cola en Redis (BullMQ)
 const REDIS_URL = process.env.REDIS_URL || process.env.UPSTASH_REDIS_URL || '';
@@ -135,6 +139,16 @@ async function downloadPdfWithDriveSupport(urlString) {
 
 dotenv.config();
 console.log('Boot OK');
+
+// Silenciar ECONNRESET opcionalmente
+if (process.env.SILENCE_NET_RESETS === 'true') {
+  const origError = console.error;
+  console.error = (...args) => {
+    const hasReset = args.some(a => (typeof a === 'object' && a && (a.code === 'ECONNRESET' || a.name === 'AbortError')) || (typeof a === 'string' && a.includes('ECONNRESET')));
+    if (hasReset) return;
+    origError(...args);
+  };
+}
 
 // Manejo global de ECONNRESET/AbortError para evitar ruido
 process.on('uncaughtException', (err) => {
