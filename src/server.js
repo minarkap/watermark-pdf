@@ -126,6 +126,50 @@ app.use(express.json({ limit: '2mb' }));
 // Storage temporal de zips por token (memoria + disco)
 const downloadTokens = new Map(); // token -> { path, expiresAt, filename }
 const ZIP_TTL_MS = 1000 * 60 * 60 * 48; // 48h
+const TMP_DIR = path.join(__dirname, '..', 'tmp');
+const TOKENS_STORE = path.join(TMP_DIR, 'download_tokens.json');
+
+async function saveTokensToDisk() {
+  try {
+    await fs.mkdir(TMP_DIR, { recursive: true });
+    const serial = [];
+    for (const [token, v] of downloadTokens.entries()) {
+      serial.push({ token, path: v.path, filename: v.filename, expiresAt: v.expiresAt });
+    }
+    await fs.writeFile(TOKENS_STORE, JSON.stringify(serial));
+  } catch (e) {
+    console.warn('[TOKENS] No se pudo guardar:', e?.message);
+  }
+}
+
+async function loadTokensFromDisk() {
+  try {
+    await fs.mkdir(TMP_DIR, { recursive: true });
+    const content = await fs.readFile(TOKENS_STORE, 'utf8').catch(() => '[]');
+    const arr = JSON.parse(content);
+    const now = Date.now();
+    for (const entry of arr) {
+      try {
+        if (!entry?.token || !entry?.path) continue;
+        const st = await fs.stat(entry.path).catch(() => null);
+        if (!st) continue;
+        if (now > (entry.expiresAt || 0)) {
+          await fs.rm(entry.path).catch(() => {});
+          continue;
+        }
+        downloadTokens.set(entry.token, { path: entry.path, filename: entry.filename, expiresAt: entry.expiresAt });
+      } catch {}
+    }
+    // Reescribir limpiando expirados/no existentes
+    await saveTokensToDisk();
+    if (downloadTokens.size > 0) console.log(`[TOKENS] Restaurados ${downloadTokens.size} tokens activos`);
+  } catch (e) {
+    console.warn('[TOKENS] No se pudo cargar:', e?.message);
+  }
+}
+
+// Cargar tokens persistidos al arranque
+await loadTokensFromDisk();
 
 app.get('/download/:token', async (req, res) => {
   try {
@@ -135,6 +179,7 @@ app.get('/download/:token', async (req, res) => {
     if (Date.now() > entry.expiresAt) {
       try { await fs.rm(entry.path).catch(() => {}); } catch {}
       downloadTokens.delete(token);
+      await saveTokensToDisk();
       return res.status(410).send('Link expirado');
     }
     return res.download(entry.path, entry.filename || 'descargables.zip');
@@ -146,12 +191,15 @@ app.get('/download/:token', async (req, res) => {
 // Limpieza periódica de zips expirados
 setInterval(async () => {
   const now = Date.now();
+  let dirty = false;
   for (const [token, entry] of downloadTokens.entries()) {
     if (now > entry.expiresAt) {
       try { await fs.rm(entry.path).catch(() => {}); } catch {}
       downloadTokens.delete(token);
+      dirty = true;
     }
   }
+  if (dirty) await saveTokensToDisk();
 }, 60 * 60 * 1000); // cada hora
 
 // Validación de esquema del webhook (básico)
@@ -416,6 +464,7 @@ app.post('/webhook', async (req, res) => {
       });
       const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
       downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS });
+      await saveTokensToDisk();
       const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
       const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
       await sendEmailWithAttachments({
@@ -649,6 +698,7 @@ if (pdfQueue && connection) {
         });
         const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
         downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS });
+        await saveTokensToDisk();
         const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
         const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
         await sendEmailWithAttachments({
