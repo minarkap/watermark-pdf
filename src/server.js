@@ -395,7 +395,6 @@ app.post('/webhook', async (req, res) => {
 
     console.log('[FLOW] Enviando email...');
     const firstName = fullName ? String(fullName).split(' ')[0] : undefined;
-    // Siempre enviar enlace ZIP de 48h
     const tmpDir = path.join(__dirname, '..', 'tmp');
     await fs.mkdir(tmpDir, { recursive: true });
     const zipName = `descargables_${Date.now()}.zip`;
@@ -418,7 +417,7 @@ app.post('/webhook', async (req, res) => {
       subject: 'Tus descargables personalizados',
       text: undefined,
       attachments: [],
-      firstName,
+      firstName: firstName,
       downloadLink: link,
       names: outputs.map(o => o.name.replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '').replace(/_/g, ' ')),
     });
@@ -614,7 +613,6 @@ if (pdfQueue && connection) {
 
       console.log('[FLOW] Enviando email...');
       const firstNameLocal = (firstName || (fullName ? String(fullName).split(' ')[0] : undefined));
-      // Siempre enviar enlace ZIP de 48h
       const tmpDir = path.join(__dirname, '..', 'tmp');
       await fs.mkdir(tmpDir, { recursive: true });
       const zipName = `descargables_${Date.now()}.zip`;
