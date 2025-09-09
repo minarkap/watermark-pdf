@@ -23,9 +23,10 @@ setGlobalDispatcher(new UndiciAgent({ keepAliveTimeout: 30_000, keepAliveMaxTime
 // Cola en Redis (BullMQ)
 const REDIS_URL = process.env.REDIS_URL || process.env.UPSTASH_REDIS_URL || '';
 const FORCE_INLINE = process.env.FORCE_INLINE === 'true';
+const ENABLE_QUEUE = process.env.ENABLE_QUEUE === 'true';
 let connection = null;
 let pdfQueue = null;
-if (!FORCE_INLINE && REDIS_URL) {
+if (ENABLE_QUEUE && !FORCE_INLINE && REDIS_URL) {
   connection = { url: REDIS_URL, maxRetriesPerRequest: null, enableReadyCheck: false };
   try {
     pdfQueue = new Queue('pdf-jobs', { connection });
@@ -36,7 +37,8 @@ if (!FORCE_INLINE && REDIS_URL) {
     connection = null;
   }
 } else {
-  console.log('[QUEUE] Ejecutando inline', FORCE_INLINE ? '(FORCE_INLINE=true)' : '(sin REDIS_URL)');
+  const reason = FORCE_INLINE ? 'FORCE_INLINE=true' : (!ENABLE_QUEUE ? 'ENABLE_QUEUE!=true' : 'sin REDIS_URL');
+  console.log('[QUEUE] Ejecutando inline (' + reason + ')');
 }
 
 const VERBOSE = process.env.LOG_VERBOSE === 'true';
