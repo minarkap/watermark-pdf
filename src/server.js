@@ -91,14 +91,27 @@ function extractDriveIdFromUrl(urlString) {
 }
 
 async function downloadPdfWithDriveSupport(urlString) {
+  const timeoutMs = Number(process.env.FETCH_TIMEOUT_MS || 30000);
   const tryFetch = async (u) => {
-    const resp = await fetch(u, { redirect: 'follow' });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const arrayBuffer = await resp.arrayBuffer();
-    const buf = Buffer.from(arrayBuffer);
-    const ct = resp.headers.get('content-type') || '';
-    if (ct.startsWith('application/pdf') || buf.slice(0, 5).toString() === '%PDF-') return buf;
-    return null;
+    console.log('[DL] GET', u);
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const resp = await fetch(u, {
+        redirect: 'follow',
+        signal: controller.signal,
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PDFWatermark/1.0; +render)' },
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const arrayBuffer = await resp.arrayBuffer();
+      const buf = Buffer.from(arrayBuffer);
+      const ct = resp.headers.get('content-type') || '';
+      console.log('[DL] OK', ct, buf.length, 'bytes');
+      if (ct.startsWith('application/pdf') || buf.slice(0, 5).toString() === '%PDF-') return buf;
+      return null;
+    } finally {
+      clearTimeout(t);
+    }
   };
 
   let buf = await tryFetch(urlString);
