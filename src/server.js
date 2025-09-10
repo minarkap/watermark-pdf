@@ -186,6 +186,8 @@ const ZIP_TTL_MS = 1000 * 60 * 60 * 48; // 48h
 const PERSISTENT_DIR = process.env.PERSISTENT_STORAGE_PATH || path.join(__dirname, '..', 'persistent');
 const TOKENS_STORE = path.join(PERSISTENT_DIR, 'download_tokens.json');
 
+console.log(`[STORAGE] Usando directorio persistente en: ${PERSISTENT_DIR}`);
+
 async function saveTokensToDisk() {
   try {
     await fs.mkdir(PERSISTENT_DIR, { recursive: true });
