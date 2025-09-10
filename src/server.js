@@ -480,8 +480,8 @@ app.post('/webhook', async (req, res) => {
             pdfDoc = await PDFDocument.load(watermarkedBytes);
             await addSecurityFeatures(pdfDoc, watermarkText, documentHash);
             const finalBytes = await pdfDoc.save();
-            const tmpDir = path.join(__dirname, '..', 'tmp');
-            await fs.mkdir(tmpDir, { recursive: true });
+    const tmpDir = path.join(__dirname, '..', 'tmp');
+    await fs.mkdir(tmpDir, { recursive: true });
             const outName = file.name.replace(/\.pdf$/i, `_${Date.now()}.pdf`);
             const outPath = path.join(tmpDir, outName);
             await fs.writeFile(outPath, finalBytes);
@@ -526,7 +526,7 @@ app.post('/webhook', async (req, res) => {
       const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
       await sendEmailWithAttachments({
         to: email,
-        subject: 'Tus descargables personalizados',
+        subject: `Descargables ${kajabiOfferTitle || ''}`.trim(),
         text: undefined,
         attachments: [],
         firstName: firstName,
@@ -536,7 +536,7 @@ app.post('/webhook', async (req, res) => {
     } else {
       await sendEmailWithAttachments({
       to: email,
-        subject: 'Tu material personalizado',
+        subject: `Descargables ${kajabiOfferTitle || ''}`.trim(),
         text: 'Adjuntamos tus descargables personalizados.',
         attachments: outputs,
         firstName,
@@ -767,7 +767,7 @@ if (pdfQueue && connection) {
           const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
           await sendEmailWithAttachments({
             to: email,
-            subject: 'Tus descargables personalizados',
+            subject: `Descargables ${kajabiOfferTitle || ''}`.trim(),
             text: undefined,
             attachments: [],
             firstName: firstNameLocal,
@@ -777,7 +777,7 @@ if (pdfQueue && connection) {
         } else {
           await sendEmailWithAttachments({
             to: email,
-            subject: 'Tu material personalizado',
+            subject: `Descargables ${kajabiOfferTitle || ''}`.trim(),
             text: 'Adjuntamos tus descargables personalizados.',
             attachments: outputs,
             firstName: firstNameLocal,
