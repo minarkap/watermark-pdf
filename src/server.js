@@ -504,16 +504,42 @@ app.post('/webhook', async (req, res) => {
       return;
     }
 
-    console.log('[FLOW] Enviando email...');
+    console.log('[FLOW] Enviando email principal...');
     const firstName = fullName ? String(fullName).split(' ')[0] : undefined;
-    // Si hay más de 2 adjuntos o total > ~17 MiB, enviar link de descarga ZIP
-    let totalSize = 0;
-    for (const o of outputsMain) {
-      try { totalSize += (await fs.stat(o.path)).size; } catch {}
-    }
-    if (outputsMain.length > 2 || totalSize > 17 * 1024 * 1024) {
+    
+    // SIEMPRE crear ZIP para keto_optimizado (correo principal)
+    await fs.mkdir(PERSISTENT_DIR, { recursive: true });
+    const zipName = `descargables_${Date.now()}.zip`;
+    const zipPath = path.join(PERSISTENT_DIR, zipName);
+    await new Promise((resolve, reject) => {
+      const output = fsSync.createWriteStream(zipPath);
+      const zip = archiver('zip', { zlib: { level: 9 } });
+      output.on('close', resolve);
+      zip.on('error', reject);
+      zip.pipe(output);
+      for (const f of outputsMain) zip.file(f.path, { name: f.name });
+      zip.finalize();
+    });
+    const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
+    downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS });
+    await saveTokensToDisk();
+    const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
+    const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
+    await sendEmailWithAttachments({
+      to: email,
+      subject: `Descargables ${kajabiOfferTitle || ''}`.trim(),
+      text: undefined,
+      attachments: [],
+      firstName: firstName,
+      downloadLink: link,
+      names: outputsMain.map(o => o.name.replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '').replace(/_/g, ' ')),
+    });
+
+    // Enviar BONUS en correo separado si existe - SIEMPRE como ZIP
+    if (outputsBonus.length > 0) {
+      console.log('[FLOW] Enviando email bonus...');
       await fs.mkdir(PERSISTENT_DIR, { recursive: true });
-      const zipName = `descargables_${Date.now()}.zip`;
+      const zipName = `bonus_${Date.now()}.zip`;
       const zipPath = path.join(PERSISTENT_DIR, zipName);
       await new Promise((resolve, reject) => {
         const output = fsSync.createWriteStream(zipPath);
@@ -521,7 +547,7 @@ app.post('/webhook', async (req, res) => {
         output.on('close', resolve);
         zip.on('error', reject);
         zip.pipe(output);
-        for (const f of outputsMain) zip.file(f.path, { name: f.name });
+        for (const f of outputsBonus) zip.file(f.path, { name: f.name });
         zip.finalize();
       });
       const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
@@ -531,65 +557,13 @@ app.post('/webhook', async (req, res) => {
       const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
       await sendEmailWithAttachments({
         to: email,
-        subject: `Descargables ${kajabiOfferTitle || ''}`.trim(),
+        subject: `Descargables ${kajabiOfferTitle || ''} - Bonus`.trim(),
         text: undefined,
         attachments: [],
         firstName: firstName,
         downloadLink: link,
-        names: outputsMain.map(o => o.name.replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '').replace(/_/g, ' ')),
+        names: outputsBonus.map(o => o.name.replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '').replace(/_/g, ' ')),
       });
-    } else {
-      await sendEmailWithAttachments({
-      to: email,
-        subject: `Descargables ${kajabiOfferTitle || ''}`.trim(),
-        text: 'Adjuntamos tus descargables personalizados.',
-        attachments: outputsMain,
-        firstName,
-      });
-    }
-
-    // Enviar BONUS en correo separado si existe
-    if (outputsBonus.length > 0) {
-      let bonusSize = 0;
-      for (const o of outputsBonus) {
-        try { bonusSize += (await fs.stat(o.path)).size; } catch {}
-      }
-      if (outputsBonus.length > 2 || bonusSize > 17 * 1024 * 1024) {
-        await fs.mkdir(PERSISTENT_DIR, { recursive: true });
-        const zipName = `bonus_${Date.now()}.zip`;
-        const zipPath = path.join(PERSISTENT_DIR, zipName);
-        await new Promise((resolve, reject) => {
-          const output = fsSync.createWriteStream(zipPath);
-          const zip = archiver('zip', { zlib: { level: 9 } });
-          output.on('close', resolve);
-          zip.on('error', reject);
-          zip.pipe(output);
-          for (const f of outputsBonus) zip.file(f.path, { name: f.name });
-          zip.finalize();
-        });
-        const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
-        downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS });
-        await saveTokensToDisk();
-        const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
-        const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
-        await sendEmailWithAttachments({
-          to: email,
-          subject: `Descargables ${kajabiOfferTitle || ''} - Bonus`.trim(),
-          text: undefined,
-          attachments: [],
-          firstName: firstName,
-          downloadLink: link,
-          names: outputsBonus.map(o => o.name.replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '').replace(/_/g, ' ')),
-        });
-      } else {
-        await sendEmailWithAttachments({
-          to: email,
-          subject: `Descargables ${kajabiOfferTitle || ''} - Bonus`.trim(),
-          text: 'Adjuntamos tus descargables bonus.',
-          attachments: outputsBonus,
-          firstName: firstName,
-        });
-      }
     }
 
     console.log('[FLOW] Email enviado');
@@ -794,14 +768,39 @@ if (pdfQueue && connection) {
 
       console.log('[FLOW] Enviando email...');
       const firstNameLocal = (firstName || (fullName ? String(fullName).split(' ')[0] : undefined));
-      // Si hay más de 2 adjuntos o total > ~17 MiB, enviar link de descarga ZIP
-      let totalSize = 0;
-      for (const o of outputsMain) {
-        try { totalSize += (await fs.stat(o.path)).size; } catch {}
-      }
-      if (outputsMain.length > 2 || totalSize > 17 * 1024 * 1024) {
+      
+      // SIEMPRE crear ZIP para keto_optimizado (correo principal)
+      await fs.mkdir(PERSISTENT_DIR, { recursive: true });
+      const zipName = `descargables_${Date.now()}.zip`;
+      const zipPath = path.join(PERSISTENT_DIR, zipName);
+      await new Promise((resolve, reject) => {
+        const output = fsSync.createWriteStream(zipPath);
+        const zip = archiver('zip', { zlib: { level: 9 } });
+        output.on('close', resolve);
+        zip.on('error', reject);
+        zip.pipe(output);
+        for (const f of outputsMain) zip.file(f.path, { name: f.name });
+        zip.finalize();
+      });
+      const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
+      downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS });
+      await saveTokensToDisk();
+      const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
+      const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
+      await sendEmailWithAttachments({
+        to: email,
+        subject: `Descargables ${kajabiOfferTitle || ''}`.trim(),
+        text: undefined,
+        attachments: [],
+        firstName: firstNameLocal,
+        downloadLink: link,
+        names: outputsMain.map(o => o.name.replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '').replace(/_/g, ' ')),
+      });
+
+      // Enviar BONUS en correo separado si existe - SIEMPRE como ZIP
+      if (outputsBonus.length > 0) {
         await fs.mkdir(PERSISTENT_DIR, { recursive: true });
-        const zipName = `descargables_${Date.now()}.zip`;
+        const zipName = `bonus_${Date.now()}.zip`;
         const zipPath = path.join(PERSISTENT_DIR, zipName);
         await new Promise((resolve, reject) => {
           const output = fsSync.createWriteStream(zipPath);
@@ -809,7 +808,7 @@ if (pdfQueue && connection) {
           output.on('close', resolve);
           zip.on('error', reject);
           zip.pipe(output);
-          for (const f of outputsMain) zip.file(f.path, { name: f.name });
+          for (const f of outputsBonus) zip.file(f.path, { name: f.name });
           zip.finalize();
         });
         const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
@@ -819,64 +818,13 @@ if (pdfQueue && connection) {
         const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
         await sendEmailWithAttachments({
           to: email,
-          subject: `Descargables ${kajabiOfferTitle || ''}`.trim(),
+          subject: `Descargables ${kajabiOfferTitle || ''} - Bonus`.trim(),
           text: undefined,
           attachments: [],
           firstName: firstNameLocal,
           downloadLink: link,
-          names: outputsMain.map(o => o.name.replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '').replace(/_/g, ' ')),
+          names: outputsBonus.map(o => o.name.replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '').replace(/_/g, ' ')),
         });
-      } else {
-        await sendEmailWithAttachments({
-          to: email,
-          subject: `Descargables ${kajabiOfferTitle || ''}`.trim(),
-          text: 'Adjuntamos tus descargables personalizados.',
-          attachments: outputsMain,
-          firstName: firstNameLocal,
-        });
-      }
-
-      if (outputsBonus.length > 0) {
-        let bonusSize = 0;
-        for (const o of outputsBonus) {
-          try { bonusSize += (await fs.stat(o.path)).size; } catch {}
-        }
-        if (outputsBonus.length > 2 || bonusSize > 17 * 1024 * 1024) {
-          await fs.mkdir(PERSISTENT_DIR, { recursive: true });
-          const zipName = `bonus_${Date.now()}.zip`;
-          const zipPath = path.join(PERSISTENT_DIR, zipName);
-          await new Promise((resolve, reject) => {
-            const output = fsSync.createWriteStream(zipPath);
-            const zip = archiver('zip', { zlib: { level: 9 } });
-            output.on('close', resolve);
-            zip.on('error', reject);
-            zip.pipe(output);
-            for (const f of outputsBonus) zip.file(f.path, { name: f.name });
-            zip.finalize();
-          });
-          const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
-          downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS });
-          await saveTokensToDisk();
-          const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
-          const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
-          await sendEmailWithAttachments({
-            to: email,
-            subject: `Descargables ${kajabiOfferTitle || ''} - Bonus`.trim(),
-            text: undefined,
-            attachments: [],
-            firstName: firstNameLocal,
-            downloadLink: link,
-            names: outputsBonus.map(o => o.name.replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '').replace(/_/g, ' ')),
-          });
-        } else {
-          await sendEmailWithAttachments({
-            to: email,
-            subject: `Descargables ${kajabiOfferTitle || ''} - Bonus`.trim(),
-            text: 'Adjuntamos tus descargables bonus.',
-            attachments: outputsBonus,
-            firstName: firstNameLocal,
-          });
-        }
       }
 
       console.log('[FLOW] Email enviado');
