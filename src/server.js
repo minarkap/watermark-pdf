@@ -12,6 +12,7 @@ import { createHash } from 'crypto';
 import { exec as execCb } from 'child_process';
 import { promisify } from 'util';
 import { Queue, Worker } from 'bullmq';
+import IORedis from 'ioredis';
 import Ajv from 'ajv';
 import archiver from 'archiver';
 const exec = promisify(execCb);
@@ -294,6 +295,37 @@ const kajabiSchema = {
 const validateDirect = ajv.compile(directSchema);
 const validateKajabi = ajv.compile(kajabiSchema);
 
+// Endpoint de diagnóstico de Redis
+app.get('/redis-test', async (req, res) => {
+  if (!REDIS_URL) {
+    return res.status(400).json({ status: 'error', message: 'REDIS_URL no está configurada.' });
+  }
+
+  try {
+    const u = new URL(REDIS_URL);
+    const needTls = u.protocol === 'rediss:' || process.env.REDIS_FORCE_TLS === 'true';
+    const redisForTest = new IORedis(REDIS_URL, {
+      maxRetriesPerRequest: 1,
+      connectTimeout: 5000,
+      ...(needTls ? { tls: { rejectUnauthorized: false } } : {}),
+    });
+
+    await redisForTest.ping();
+    redisForTest.disconnect();
+    res.json({ status: 'ok', message: 'Conexión a Redis exitosa!' });
+  } catch (error) {
+    res.status(500).json({
+      status: 'error',
+      message: 'Fallo al conectar a Redis.',
+      redis_url: REDIS_URL,
+      error: error.message,
+      stack: error.stack,
+    });
+  }
+});
+
+
+// Rutas
 app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });

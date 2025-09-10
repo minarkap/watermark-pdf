@@ -12,17 +12,17 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "ajv": "^8.12.0",
+    "archiver": "^6.0.2",
+    "bullmq": "^5.7.1",
     "dotenv": "^17.2.2",
     "express": "^5.1.0",
     "googleapis": "^159.0.0",
+    "ioredis": "^5.7.0",
     "multer": "^2.0.2",
     "nodemailer": "^7.0.6",
     "pdf-lib": "^1.17.1",
-    "sharp": "^0.34.3",
-    "bullmq": "^5.7.1",
-    "ioredis": "^5.4.1",
-    "ajv": "^8.12.0",
-    "archiver": "^6.0.2"
+    "sharp": "^0.34.3"
   },
   "type": "module"
 }
