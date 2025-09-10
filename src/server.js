@@ -403,33 +403,49 @@ app.post('/webhook', async (req, res) => {
         console.log(`[FLOW] Procesando pack '${offerKey}'...`);
         let filesToProcess = [];
 
-        try {
-          const entries = await fs.readdir(config.dir, { withFileTypes: true });
-          const pdfFiles = entries.filter(e => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).map(e => ({
-            name: e.name,
-            path: path.join(config.dir, e.name),
-            source: 'local'
-          }));
-          if (pdfFiles.length > 0) filesToProcess = pdfFiles;
-        } catch (e) {
-          if (e?.code !== 'ENOENT') throw e;
-        }
-
-        if (filesToProcess.length === 0) {
-          const urlsJson = process.env[config.urls_env];
-          if (urlsJson) {
-            try {
-              const list = JSON.parse(urlsJson);
-              if (Array.isArray(list) && list.length > 0) {
-                filesToProcess = list.map(item => ({
+        // Siempre procesar TODOS los archivos de las URLs (tanto locales como remotos)
+        const urlsJson = process.env[config.urls_env];
+        if (urlsJson) {
+          try {
+            const list = JSON.parse(urlsJson);
+            if (Array.isArray(list) && list.length > 0) {
+              filesToProcess = list.map(item => {
+                const localPath = path.join(config.dir, item.name);
+                // Verificar si el archivo ya está descargado localmente
+                try {
+                  if (fsSync.existsSync(localPath)) {
+                    return {
+                      name: item.name,
+                      path: localPath,
+                      source: 'local'
+                    };
+                  }
+                } catch {}
+                // Si no está local, marcar para descarga remota
+                return {
                   name: item.name,
                   url: item.url,
                   source: 'remote'
-                }));
-              }
-            } catch {
-              throw new Error(`${config.urls_env} no es un JSON válido`);
+                };
+              });
             }
+          } catch {
+            throw new Error(`${config.urls_env} no es un JSON válido`);
+          }
+        }
+
+        // Fallback: si no hay URLs configuradas, buscar archivos locales
+        if (filesToProcess.length === 0) {
+          try {
+            const entries = await fs.readdir(config.dir, { withFileTypes: true });
+            const pdfFiles = entries.filter(e => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).map(e => ({
+              name: e.name,
+              path: path.join(config.dir, e.name),
+              source: 'local'
+            }));
+            if (pdfFiles.length > 0) filesToProcess = pdfFiles;
+          } catch (e) {
+            if (e?.code !== 'ENOENT') throw e;
           }
         }
 
@@ -656,33 +672,49 @@ if (pdfQueue && connection) {
           console.log(`[FLOW] Procesando pack '${offerKey}'...`);
           let filesToProcess = [];
 
-          try {
-            const entries = await fs.readdir(config.dir, { withFileTypes: true });
-            const pdfFiles = entries.filter(e => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).map(e => ({
-              name: e.name,
-              path: path.join(config.dir, e.name),
-              source: 'local'
-            }));
-            if (pdfFiles.length > 0) filesToProcess = pdfFiles;
-          } catch (e) {
-            if (e?.code !== 'ENOENT') throw e;
-          }
-
-          if (filesToProcess.length === 0) {
-            const urlsJson = process.env[config.urls_env];
-            if (urlsJson) {
-              try {
-                const list = JSON.parse(urlsJson);
-                if (Array.isArray(list) && list.length > 0) {
-                  filesToProcess = list.map(item => ({
+          // Siempre procesar TODOS los archivos de las URLs (tanto locales como remotos)
+          const urlsJson = process.env[config.urls_env];
+          if (urlsJson) {
+            try {
+              const list = JSON.parse(urlsJson);
+              if (Array.isArray(list) && list.length > 0) {
+                filesToProcess = list.map(item => {
+                  const localPath = path.join(config.dir, item.name);
+                  // Verificar si el archivo ya está descargado localmente
+                  try {
+                    if (fsSync.existsSync(localPath)) {
+                      return {
+                        name: item.name,
+                        path: localPath,
+                        source: 'local'
+                      };
+                    }
+                  } catch {}
+                  // Si no está local, marcar para descarga remota
+                  return {
                     name: item.name,
                     url: item.url,
                     source: 'remote'
-                  }));
-                }
-              } catch {
-                throw new Error(`${config.urls_env} no es un JSON válido`);
+                  };
+                });
               }
+            } catch {
+              throw new Error(`${config.urls_env} no es un JSON válido`);
+            }
+          }
+
+          // Fallback: si no hay URLs configuradas, buscar archivos locales
+          if (filesToProcess.length === 0) {
+            try {
+              const entries = await fs.readdir(config.dir, { withFileTypes: true });
+              const pdfFiles = entries.filter(e => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).map(e => ({
+                name: e.name,
+                path: path.join(config.dir, e.name),
+                source: 'local'
+              }));
+              if (pdfFiles.length > 0) filesToProcess = pdfFiles;
+            } catch (e) {
+              if (e?.code !== 'ENOENT') throw e;
             }
           }
           
