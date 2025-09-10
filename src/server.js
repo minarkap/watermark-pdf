@@ -22,7 +22,9 @@ let connection = null;
 let pdfQueue = null;
 let workerActive = false;
 if (REDIS_URL) {
-  connection = { url: REDIS_URL, maxRetriesPerRequest: null, enableReadyCheck: false };
+  const u = (() => { try { return new URL(REDIS_URL); } catch { return null; } })();
+  const needTls = (u && u.protocol === 'rediss:') || process.env.REDIS_FORCE_TLS === 'true';
+  connection = { url: REDIS_URL, maxRetriesPerRequest: null, enableReadyCheck: false, ...(needTls ? { tls: { rejectUnauthorized: false } } : {}) };
   try {
     pdfQueue = new Queue('pdf-jobs', { connection });
   } catch (e) {
@@ -608,8 +610,7 @@ app.post('/webhook', async (req, res) => {
 // Worker (si hay Redis) – procesa en el mismo contenedor
 if (pdfQueue && connection) {
   try {
-    // eslint-disable-next-line no-new
-    new Worker(
+    const worker = new Worker(
       'pdf-jobs',
       async (job) => {
       const { fullName, email, purchasedAt, kajabiOfferTitle, firstName } = job.data || {};
@@ -885,11 +886,12 @@ if (pdfQueue && connection) {
     },
     { connection, concurrency: 1 }
   );
-  workerActive = true;
-} catch (e) {
-  console.warn('[QUEUE] Worker no iniciado, usando fallback inline:', e?.message);
-  workerActive = false;
-}
+  worker.on('ready', () => { workerActive = true; console.log('[QUEUE] Worker ready'); });
+  worker.on('error', (err) => { workerActive = false; console.warn('[QUEUE] Worker error:', err?.message); });
+  } catch (e) {
+    console.warn('[QUEUE] Worker no iniciado, usando fallback inline:', e?.message);
+    workerActive = false;
+  }
 }
 
 const PORT = process.env.PORT || 3000;
