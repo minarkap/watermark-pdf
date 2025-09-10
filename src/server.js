@@ -92,6 +92,8 @@ function extractDriveIdFromUrl(urlString) {
 
 async function downloadPdfWithDriveSupport(urlString) {
   const timeoutMs = Number(process.env.FETCH_TIMEOUT_MS || 30000);
+  const maxRetries = Number(process.env.FETCH_RETRIES || 3);
+  const baseDelay = Number(process.env.FETCH_RETRY_BASE_MS || 1000);
   const tryFetch = async (u) => {
     console.log('[DL] GET', u);
     const controller = new AbortController();
@@ -114,13 +116,36 @@ async function downloadPdfWithDriveSupport(urlString) {
     }
   };
 
-  let buf = await tryFetch(urlString);
+  const fetchWithRetry = async (u) => {
+    let attempt = 0;
+    let lastErr = null;
+    while (attempt < maxRetries) {
+      try {
+        const buf = await tryFetch(u);
+        if (buf) return buf;
+        throw new Error('Contenido no es PDF');
+      } catch (e) {
+        lastErr = e;
+        const isAbort = String(e?.name).includes('AbortError');
+        const msg = String(e?.message || '');
+        const retryable = isAbort || /ECONNRESET|ETIMEDOUT|EAI_AGAIN|network/i.test(msg);
+        attempt += 1;
+        if (!retryable || attempt >= maxRetries) break;
+        const delay = baseDelay * Math.pow(2, attempt - 1);
+        console.warn(`[DL] fallo (${attempt}/${maxRetries}) ${msg}. Reintentando en ${delay}ms`);
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+    throw lastErr || new Error('Fallo de descarga');
+  };
+
+  let buf = await fetchWithRetry(urlString);
   if (buf) return buf;
 
   const id = extractDriveIdFromUrl(urlString);
   if (id) {
     const alt = `https://drive.usercontent.google.com/uc?export=download&id=${id}`;
-    buf = await tryFetch(alt);
+    buf = await fetchWithRetry(alt);
     if (buf) return buf;
   }
 
