@@ -35,6 +35,9 @@ GMAIL_SENDER=
 # BASE_PDF_PATH=/usr/src/app/KO_ebook.pdf
 # BASE_PDF_URL=https://.../KO_ebook.pdf
 # KETO_OPTIMIZADO_URLS=[{"name":"Keto_Optimizado_Baja_kcal_2024.pdf","url":"https://.../Keto_Optimizado_Baja_kcal_2024.pdf"}]
+
+# Storage persistente para descargas (sobrevive a redeploys)
+PERSISTENT_STORAGE_PATH=/app/persistent
 ```
 2) El `GMAIL_REFRESH_TOKEN` debe emitirse para `GMAIL_SENDER` con el scope `https://mail.google.com/`.
 

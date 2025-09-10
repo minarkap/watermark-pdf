@@ -175,15 +175,16 @@ const __dirname = path.dirname(__filename);
 const app = express();
 app.use(express.json({ limit: '2mb' }));
 
-// Storage temporal de zips por token (memoria + disco)
+// Storage persistente de zips por token (memoria + disco)
 const downloadTokens = new Map(); // token -> { path, expiresAt, filename }
 const ZIP_TTL_MS = 1000 * 60 * 60 * 48; // 48h
-const TMP_DIR = path.join(__dirname, '..', 'tmp');
-const TOKENS_STORE = path.join(TMP_DIR, 'download_tokens.json');
+// Usar directorio persistente que sobrevive a redeploys
+const PERSISTENT_DIR = process.env.PERSISTENT_STORAGE_PATH || path.join(__dirname, '..', 'persistent');
+const TOKENS_STORE = path.join(PERSISTENT_DIR, 'download_tokens.json');
 
 async function saveTokensToDisk() {
   try {
-    await fs.mkdir(TMP_DIR, { recursive: true });
+    await fs.mkdir(PERSISTENT_DIR, { recursive: true });
     const serial = [];
     for (const [token, v] of downloadTokens.entries()) {
       serial.push({ token, path: v.path, filename: v.filename, expiresAt: v.expiresAt });
@@ -196,7 +197,7 @@ async function saveTokensToDisk() {
 
 async function loadTokensFromDisk() {
   try {
-    await fs.mkdir(TMP_DIR, { recursive: true });
+    await fs.mkdir(PERSISTENT_DIR, { recursive: true });
     const content = await fs.readFile(TOKENS_STORE, 'utf8').catch(() => '[]');
     const arr = JSON.parse(content);
     const now = Date.now();
@@ -511,10 +512,9 @@ app.post('/webhook', async (req, res) => {
       try { totalSize += (await fs.stat(o.path)).size; } catch {}
     }
     if (outputsMain.length > 2 || totalSize > 17 * 1024 * 1024) {
-      const tmpDir = path.join(__dirname, '..', 'tmp');
-      await fs.mkdir(tmpDir, { recursive: true });
+      await fs.mkdir(PERSISTENT_DIR, { recursive: true });
       const zipName = `descargables_${Date.now()}.zip`;
-      const zipPath = path.join(tmpDir, zipName);
+      const zipPath = path.join(PERSISTENT_DIR, zipName);
       await new Promise((resolve, reject) => {
         const output = fsSync.createWriteStream(zipPath);
         const zip = archiver('zip', { zlib: { level: 9 } });
@@ -555,10 +555,9 @@ app.post('/webhook', async (req, res) => {
         try { bonusSize += (await fs.stat(o.path)).size; } catch {}
       }
       if (outputsBonus.length > 2 || bonusSize > 17 * 1024 * 1024) {
-        const tmpDir = path.join(__dirname, '..', 'tmp');
-        await fs.mkdir(tmpDir, { recursive: true });
+        await fs.mkdir(PERSISTENT_DIR, { recursive: true });
         const zipName = `bonus_${Date.now()}.zip`;
-        const zipPath = path.join(tmpDir, zipName);
+        const zipPath = path.join(PERSISTENT_DIR, zipName);
         await new Promise((resolve, reject) => {
           const output = fsSync.createWriteStream(zipPath);
           const zip = archiver('zip', { zlib: { level: 9 } });
@@ -801,10 +800,9 @@ if (pdfQueue && connection) {
         try { totalSize += (await fs.stat(o.path)).size; } catch {}
       }
       if (outputsMain.length > 2 || totalSize > 17 * 1024 * 1024) {
-        const tmpDir = path.join(__dirname, '..', 'tmp');
-        await fs.mkdir(tmpDir, { recursive: true });
+        await fs.mkdir(PERSISTENT_DIR, { recursive: true });
         const zipName = `descargables_${Date.now()}.zip`;
-        const zipPath = path.join(tmpDir, zipName);
+        const zipPath = path.join(PERSISTENT_DIR, zipName);
         await new Promise((resolve, reject) => {
           const output = fsSync.createWriteStream(zipPath);
           const zip = archiver('zip', { zlib: { level: 9 } });
@@ -844,10 +842,9 @@ if (pdfQueue && connection) {
           try { bonusSize += (await fs.stat(o.path)).size; } catch {}
         }
         if (outputsBonus.length > 2 || bonusSize > 17 * 1024 * 1024) {
-          const tmpDir = path.join(__dirname, '..', 'tmp');
-          await fs.mkdir(tmpDir, { recursive: true });
+          await fs.mkdir(PERSISTENT_DIR, { recursive: true });
           const zipName = `bonus_${Date.now()}.zip`;
-          const zipPath = path.join(tmpDir, zipName);
+          const zipPath = path.join(PERSISTENT_DIR, zipName);
           await new Promise((resolve, reject) => {
             const output = fsSync.createWriteStream(zipPath);
             const zip = archiver('zip', { zlib: { level: 9 } });
