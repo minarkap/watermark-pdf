@@ -16,6 +16,9 @@ import Ajv from 'ajv';
 import archiver from 'archiver';
 const exec = promisify(execCb);
 
+// Lock para descargas concurrentes en modo inline/worker
+const downloadPromises = new Map();
+
 // Cola en Redis (BullMQ)
 const REDIS_URL = process.env.REDIS_URL || process.env.UPSTASH_REDIS_URL || '';
 let connection = null;
@@ -462,14 +465,29 @@ app.post('/webhook', async (req, res) => {
             if (file.source === 'local') {
               bytes = await fs.readFile(file.path);
             } else {
-              bytes = await downloadPdfWithDriveSupport(file.url);
-              if (bytes.slice(0, 5).toString() !== '%PDF-') {
-                throw new Error('Contenido descargado no parece ser PDF (sin cabecera %PDF-)');
+              // Lock para evitar descargas concurrentes del mismo archivo
+              const downloadKey = file.url;
+              if (downloadPromises.has(downloadKey)) {
+                console.log(`[DL] Esperando descarga concurrente de ${file.name}...`);
+                bytes = await downloadPromises.get(downloadKey);
+              } else {
+                const promise = (async () => {
+                  const b = await downloadPdfWithDriveSupport(file.url);
+                  if (b.slice(0, 5).toString() !== '%PDF-') {
+                    throw new Error('Contenido descargado no parece ser PDF (sin cabecera %PDF-)');
+                  }
+                  await fs.mkdir(config.dir, { recursive: true });
+                  const dlPath = path.join(config.dir, file.name);
+                  await fs.writeFile(dlPath, b);
+                  return fs.readFile(dlPath);
+                })();
+                downloadPromises.set(downloadKey, promise);
+                try {
+                  bytes = await promise;
+                } finally {
+                  downloadPromises.delete(downloadKey); // Limpiar lock
+                }
               }
-              await fs.mkdir(config.dir, { recursive: true });
-              const dlPath = path.join(config.dir, file.name);
-              await fs.writeFile(dlPath, bytes);
-              bytes = await fs.readFile(dlPath);
             }
             
             if (process.env.ENABLE_GS !== 'false') {
