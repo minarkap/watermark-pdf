@@ -202,7 +202,10 @@ async function saveTokensToDisk() {
 async function loadTokensFromDisk() {
   try {
     await fs.mkdir(PERSISTENT_DIR, { recursive: true });
-    const content = await fs.readFile(TOKENS_STORE, 'utf8').catch(() => '[]');
+    const content = await fs.readFile(TOKENS_STORE, 'utf8').catch(() => {
+      console.log('[TOKENS] No se encontró el archivo de tokens (download_tokens.json). Es normal en el primer arranque.');
+      return '[]';
+    });
     const arr = JSON.parse(content);
     const now = Date.now();
     for (const entry of arr) {
@@ -219,7 +222,7 @@ async function loadTokensFromDisk() {
     }
     // Reescribir limpiando expirados/no existentes
     await saveTokensToDisk();
-    if (downloadTokens.size > 0) console.log(`[TOKENS] Restaurados ${downloadTokens.size} tokens activos`);
+    if (downloadTokens.size > 0) console.log(`[TOKENS] Restaurados ${downloadTokens.size} tokens activos desde ${TOKENS_STORE}`);
   } catch (e) {
     console.warn('[TOKENS] No se pudo cargar:', e?.message);
   }
