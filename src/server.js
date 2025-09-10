@@ -735,7 +735,8 @@ if (pdfQueue && connection) {
             }
           }
         }
-        else {
+
+        if (!(offerKeys.length > 0)) {
           console.log('[FLOW] Oferta no mapeada, no se procesa. Título recibido:', kajabiOfferTitle);
           return;
         }
