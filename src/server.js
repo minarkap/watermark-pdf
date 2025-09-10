@@ -139,17 +139,28 @@ async function downloadPdfWithDriveSupport(urlString) {
     throw lastErr || new Error('Fallo de descarga');
   };
 
-  let buf = await fetchWithRetry(urlString);
-  if (buf) return buf;
-
+  // Preferir enlace directo usercontent cuando se puede
   const id = extractDriveIdFromUrl(urlString);
-  if (id) {
-    const alt = `https://drive.usercontent.google.com/uc?export=download&id=${id}`;
-    buf = await fetchWithRetry(alt);
-    if (buf) return buf;
+  const usercontentUrl = id ? `https://drive.usercontent.google.com/uc?export=download&id=${id}` : null;
+
+  // Orden: 1) usercontent (si hay id) 2) original share link (fallback)
+  if (usercontentUrl) {
+    try {
+      const buf = await fetchWithRetry(usercontentUrl);
+      if (buf) return buf;
+    } catch (e) {
+      console.warn('[DL] usercontent falló, intentando share link:', e?.message);
+    }
   }
 
-  throw new Error('Contenido descargado no parece ser PDF (Google Drive puede requerir confirmación). Usa enlaces directos de drive.usercontent.');
+  try {
+    const buf = await fetchWithRetry(urlString);
+    if (buf) return buf;
+  } catch (e) {
+    console.warn('[DL] share link falló:', e?.message);
+  }
+
+  throw new Error('Contenido descargado no parece ser PDF (usa enlaces drive.usercontent o revisa permisos)');
 }
 
 dotenv.config();
