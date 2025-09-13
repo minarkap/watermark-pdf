@@ -219,7 +219,7 @@ async function saveTokensToDisk() {
     await fs.mkdir(PERSISTENT_DIR, { recursive: true });
     const serial = [];
     for (const [token, v] of downloadTokens.entries()) {
-      serial.push({ token, path: v.path, filename: v.filename, expiresAt: v.expiresAt });
+      serial.push({ token, path: v.path, filename: v.filename, expiresAt: v.expiresAt, user: v.user });
     }
     await fs.writeFile(TOKENS_STORE, JSON.stringify(serial));
   } catch (e) {
@@ -245,7 +245,7 @@ async function loadTokensFromDisk() {
           await fs.rm(entry.path).catch(() => {});
           continue;
         }
-        downloadTokens.set(entry.token, { path: entry.path, filename: entry.filename, expiresAt: entry.expiresAt });
+        downloadTokens.set(entry.token, { path: entry.path, filename: entry.filename, expiresAt: entry.expiresAt, user: entry.user });
       } catch {}
     }
     // Reescribir limpiando expirados/no existentes
@@ -623,7 +623,7 @@ app.post('/webhook', async (req, res) => {
       zip.finalize();
     });
     const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
-    downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS });
+    downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS, user: { fullName, email, offer: kajabiOfferTitle } });
     await saveTokensToDisk();
     const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
     const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
@@ -654,7 +654,7 @@ app.post('/webhook', async (req, res) => {
         zip.finalize();
       });
       const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
-      downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS });
+      downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS, user: { fullName, email, offer: kajabiOfferTitle } });
       await saveTokensToDisk();
       const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
       const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
@@ -908,7 +908,7 @@ if (pdfQueue && connection) {
           zip.finalize();
         });
         const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
-        downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS });
+        downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS, user: { fullName: job.data.fullName, email: job.data.email, offer: job.data.kajabiOfferTitle } });
         await saveTokensToDisk();
         const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
         const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
@@ -938,7 +938,7 @@ if (pdfQueue && connection) {
             zip.finalize();
           });
           const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
-          downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS });
+          downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS, user: { fullName: job.data.fullName, email: job.data.email, offer: job.data.kajabiOfferTitle } });
           await saveTokensToDisk();
           const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
           const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
@@ -1019,6 +1019,7 @@ app.get('/links/active', async (req, res) => {
           link: `${publicBase.replace(/\/$/, '')}/download/${token}`,
           filename: data.filename,
           expiresAt: new Date(data.expiresAt).toISOString(),
+          user: data.user || null,
         });
       }
     }
