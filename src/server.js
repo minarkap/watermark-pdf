@@ -189,12 +189,25 @@ const LOG_FILE = path.join(PERSISTENT_DIR, 'processing.log');
 
 console.log(`[STORAGE] Usando directorio persistente en: ${PERSISTENT_DIR}`);
 
-async function logSuccessfulJob(jobData) {
+async function logJobEvent(jobData, status, errorMessage = null) {
   try {
-    const { fullName, email, kajabiOfferTitle, offerKeys } = jobData;
+    const { fullName, email, kajabiOfferTitle, offerKeys, links } = jobData || {};
     const timestamp = new Date().toISOString();
     const products = (Array.isArray(offerKeys) && offerKeys.length > 0) ? offerKeys.join(', ') : 'N/A';
-    const logEntry = `[${timestamp}] SUCCESS | Email: ${email} | Name: ${fullName} | Offer: ${kajabiOfferTitle || 'N/A'} | Products: [${products}]\n`;
+    
+    let logEntry = `[${timestamp}] ${status.padEnd(10)} | Email: ${email} | Name: ${fullName} | Offer: ${kajabiOfferTitle || 'N/A'}`;
+    if (status === 'SUCCESS') {
+      logEntry += ` | Products: [${products}]`;
+      if (Array.isArray(links) && links.length > 0) {
+        logEntry += ` | Links: [${links.join(', ')}]`;
+      }
+      logEntry += '\n';
+    } else if (status === 'ERROR' && errorMessage) {
+      logEntry += ` | Error: ${errorMessage}\n`;
+    } else {
+      logEntry += '\n';
+    }
+
     await fs.appendFile(LOG_FILE, logEntry);
   } catch (e) {
     console.warn('[LOG] Failed to write to log file:', e?.message);
@@ -374,6 +387,9 @@ app.post('/webhook', async (req, res) => {
 
   // --- Encolar el trabajo en segundo plano (BullMQ en Redis o fallback inline) ---
   const jobPayload = { fullName, email, purchasedAt, kajabiOfferTitle, firstName };
+
+  // Log de inicio de proceso
+  await logJobEvent(jobPayload, 'PROCESSING');
 
   if (pdfQueue && workerActive) {
     const jobId = `${email}:${purchasedAt || ''}:${kajabiOfferTitle || ''}`;
@@ -588,6 +604,8 @@ app.post('/webhook', async (req, res) => {
       return;
     }
 
+    const generatedLinks = [];
+
     console.log('[FLOW] Enviando email principal...');
     const firstName = fullName ? String(fullName).split(' ')[0] : undefined;
     
@@ -609,6 +627,7 @@ app.post('/webhook', async (req, res) => {
     await saveTokensToDisk();
     const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
     const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
+    generatedLinks.push(link);
     await sendEmailWithAttachments({
       to: email,
       subject: `Descargables ${kajabiOfferTitle || ''}`.trim(),
@@ -639,6 +658,7 @@ app.post('/webhook', async (req, res) => {
       await saveTokensToDisk();
       const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
       const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
+      generatedLinks.push(link);
       await sendEmailWithAttachments({
         to: email,
         subject: `Descargables ${kajabiOfferTitle || ''} - Bonus`.trim(),
@@ -651,11 +671,12 @@ app.post('/webhook', async (req, res) => {
     }
 
     console.log('[FLOW] Email enviado');
-    await logSuccessfulJob({ fullName, email, kajabiOfferTitle, offerKeys });
+    await logJobEvent({ fullName, email, kajabiOfferTitle, offerKeys, links: generatedLinks }, 'SUCCESS');
 
     console.log(`Proceso completado para ${email}`);
 
   } catch (err) {
+      await logJobEvent({ fullName, email, kajabiOfferTitle }, 'ERROR', err.message);
       console.error(`--- ERROR FATAL EN SEGUNDO PLANO PARA ${email} ---`);
       console.error("Mensaje:", err.message);
       console.error("Stack:", err.stack);
@@ -671,237 +692,211 @@ if (pdfQueue && connection) {
     const worker = new Worker(
       'pdf-jobs',
       async (job) => {
-      const { fullName, email, purchasedAt, kajabiOfferTitle, firstName } = job.data || {};
-      const timestamp = purchasedAt || new Date().toISOString();
-      const watermarkText = `${fullName} | ${email} | ${timestamp}`;
+      try {
+        const { fullName, email, purchasedAt, kajabiOfferTitle, firstName } = job.data || {};
+        const timestamp = purchasedAt || new Date().toISOString();
+        const watermarkText = `${fullName} | ${email} | ${timestamp}`;
 
-      // Reutilizamos la misma lógica del fallback ejecutando el "job" inline
-      // Copiamos el cuerpo de la función bajo el try { ... } para no duplicar más estructura
-      // Nota: mantenemos logs compactos
+        // Reutilizamos la misma lógica del fallback ejecutando el "job" inline
+        // Copiamos el cuerpo de la función bajo el try { ... } para no duplicar más estructura
+        // Nota: mantenemos logs compactos
 
-      // Normalizador para comparar sin acentos y sin sensibilidad a mayúsculas
-      const normalizeTitle = (s) => (s || '').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        // Normalizador para comparar sin acentos y sin sensibilidad a mayúsculas
+        const normalizeTitle = (s) => (s || '').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
-      // Mapeo de títulos a carpetas y URLs
-      const offerMappings = {
-        keto_optimizado: {
-          match: (t) => normalizeTitle(t).includes('keto optimizado'),
-          urls_env: 'KETO_OPTIMIZADO_URLS',
-          dir: path.join(__dirname, '..', 'descargables', 'keto_optimizado'),
-        },
-        bonus_ko: {
-          match: (t) => normalizeTitle(t).includes('keto optimizado'),
-          urls_env: 'BONUS_KO_URLS',
-          dir: path.join(__dirname, '..', 'descargables', 'bonus_ko'),
-        },
-        keto_fast: {
-          match: (t) => {
-            const n = normalizeTitle(t);
-            return n.includes('keto fast') || n.includes('keto-fast');
+        // Mapeo de títulos a carpetas y URLs
+        const offerMappings = {
+          keto_optimizado: {
+            match: (t) => normalizeTitle(t).includes('keto optimizado'),
+            urls_env: 'KETO_OPTIMIZADO_URLS',
+            dir: path.join(__dirname, '..', 'descargables', 'keto_optimizado'),
           },
-          urls_env: 'KETO_FAST_URLS',
-          dir: path.join(__dirname, '..', 'descargables', 'keto_fast'),
-        },
-        ldl_colesterol: {
-          match: (t) => normalizeTitle(t).includes('colesterol'),
-          urls_env: 'LDL_COLESTEROL_URLS',
-          dir: path.join(__dirname, '..', 'descargables', 'ldl_colesterol'),
-        },
-        control_apetito: {
-          match: (t) => {
-            const n = normalizeTitle(t);
-            return n.includes('ebook') && n.includes('control absoluto del apetito');
+          bonus_ko: {
+            match: (t) => normalizeTitle(t).includes('keto optimizado'),
+            urls_env: 'BONUS_KO_URLS',
+            dir: path.join(__dirname, '..', 'descargables', 'bonus_ko'),
           },
-          urls_env: 'CONTROL_APETITO_URLS',
-          dir: path.join(__dirname, '..', 'descargables', 'control_apetito'),
-        },
-        analiticas_esenciales: {
-          match: (t) => {
-            const n = normalizeTitle(t);
-            return n.includes('analiticas esenciales');
+          keto_fast: {
+            match: (t) => {
+              const n = normalizeTitle(t);
+              return n.includes('keto fast') || n.includes('keto-fast');
+            },
+            urls_env: 'KETO_FAST_URLS',
+            dir: path.join(__dirname, '..', 'descargables', 'keto_fast'),
           },
-          urls_env: 'ANALITICAS_ESENCIALES_URLS',
-          dir: path.join(__dirname, '..', 'descargables', 'analiticas_esenciales'),
+          ldl_colesterol: {
+            match: (t) => normalizeTitle(t).includes('colesterol'),
+            urls_env: 'LDL_COLESTEROL_URLS',
+            dir: path.join(__dirname, '..', 'descargables', 'ldl_colesterol'),
+          },
+          control_apetito: {
+            match: (t) => {
+              const n = normalizeTitle(t);
+              return n.includes('ebook') && n.includes('control absoluto del apetito');
+            },
+            urls_env: 'CONTROL_APETITO_URLS',
+            dir: path.join(__dirname, '..', 'descargables', 'control_apetito'),
+          },
+          analiticas_esenciales: {
+            match: (t) => {
+              const n = normalizeTitle(t);
+              return n.includes('analiticas esenciales');
+            },
+            urls_env: 'ANALITICAS_ESENCIALES_URLS',
+            dir: path.join(__dirname, '..', 'descargables', 'analiticas_esenciales'),
+          }
+        };
+        
+        const offerKeys = [];
+        for (const [key, config] of Object.entries(offerMappings)) {
+          if (kajabiOfferTitle && typeof config.match === 'function' && config.match(kajabiOfferTitle)) {
+            offerKeys.push(key);
+          }
         }
-      };
-      
-      const offerKeys = [];
-      for (const [key, config] of Object.entries(offerMappings)) {
-        if (kajabiOfferTitle && typeof config.match === 'function' && config.match(kajabiOfferTitle)) {
-          offerKeys.push(key);
-        }
-      }
 
-      const outputsMain = [];
-      const outputsBonus = [];
-      if (offerKeys.length > 0) {
-        console.log(`[FLOW] Ofertas detectadas: ${offerKeys.join(', ')}`);
-        for (const offerKey of offerKeys) {
-          const config = offerMappings[offerKey];
-          console.log(`[FLOW] Procesando pack '${offerKey}'...`);
-          let filesToProcess = [];
+        const outputsMain = [];
+        const outputsBonus = [];
+        if (offerKeys.length > 0) {
+          console.log(`[FLOW] Ofertas detectadas: ${offerKeys.join(', ')}`);
+          for (const offerKey of offerKeys) {
+            const config = offerMappings[offerKey];
+            console.log(`[FLOW] Procesando pack '${offerKey}'...`);
+            let filesToProcess = [];
 
-          // Siempre procesar TODOS los archivos de las URLs (tanto locales como remotos)
-          const urlsJson = process.env[config.urls_env];
-          if (urlsJson) {
-            try {
-              const list = JSON.parse(urlsJson);
-              if (Array.isArray(list) && list.length > 0) {
-                filesToProcess = list.map(item => {
-                  const localPath = path.join(config.dir, item.name);
-                  // Verificar si el archivo ya está descargado localmente
-                  try {
-                    if (fsSync.existsSync(localPath)) {
-                      return {
-                        name: item.name,
-                        path: localPath,
-                        source: 'local'
-                      };
-                    }
-                  } catch {}
-                  // Si no está local, marcar para descarga remota
-                  return {
-                    name: item.name,
-                    url: item.url,
-                    source: 'remote'
-                  };
-                });
-              }
-            } catch {
-              throw new Error(`${config.urls_env} no es un JSON válido`);
-            }
-          }
-
-          // Fallback: si no hay URLs configuradas, buscar archivos locales
-          if (filesToProcess.length === 0) {
-            try {
-              const entries = await fs.readdir(config.dir, { withFileTypes: true });
-              const pdfFiles = entries.filter(e => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).map(e => ({
-                name: e.name,
-                path: path.join(config.dir, e.name),
-                source: 'local'
-              }));
-              if (pdfFiles.length > 0) filesToProcess = pdfFiles;
-            } catch (e) {
-              if (e?.code !== 'ENOENT') throw e;
-            }
-          }
-          
-          if (filesToProcess.length === 0) {
-            console.warn(`[FLOW] No hay PDFs para pack '${offerKey}' (ni locales ni URLs)`);
-            continue;
-          }
-
-          console.log(`[FLOW] Procesando ${filesToProcess.length} PDFs...`);
-          for (const file of filesToProcess) {
-            try {
-              console.log(`[FLOW] - ${file.name} (${file.source})`);
-              let bytes;
-              if (file.source === 'local') {
-                bytes = await fs.readFile(file.path);
-              } else {
-                bytes = await downloadPdfWithDriveSupport(file.url);
-                // Validar PDF y persistir en carpeta
-                if (bytes.slice(0, 5).toString() !== '%PDF-') {
-                  throw new Error('Contenido descargado no parece ser PDF (sin cabecera %PDF-)');
+            // Siempre procesar TODOS los archivos de las URLs (tanto locales como remotos)
+            const urlsJson = process.env[config.urls_env];
+            if (urlsJson) {
+              try {
+                const list = JSON.parse(urlsJson);
+                if (Array.isArray(list) && list.length > 0) {
+                  filesToProcess = list.map(item => {
+                    const localPath = path.join(config.dir, item.name);
+                    // Verificar si el archivo ya está descargado localmente
+                    try {
+                      if (fsSync.existsSync(localPath)) {
+                        return {
+                          name: item.name,
+                          path: localPath,
+                          source: 'local'
+                        };
+                      }
+                    } catch {}
+                    // Si no está local, marcar para descarga remota
+                    return {
+                      name: item.name,
+                      url: item.url,
+                      source: 'remote'
+                    };
+                  });
                 }
-                await fs.mkdir(config.dir, { recursive: true });
-                const dlPath = path.join(config.dir, file.name);
-                await fs.writeFile(dlPath, bytes);
-                // Leer desde disco a partir de aquí para unificar flujo
-                bytes = await fs.readFile(dlPath);
+              } catch {
+                throw new Error(`${config.urls_env} no es un JSON válido`);
               }
-              
-              // Saneado y normalización
-              if (process.env.ENABLE_GS !== 'false') {
-                try {
-                  const tmpDir = path.join(__dirname, '..', 'tmp');
-                  await fs.mkdir(tmpDir, { recursive: true });
-                  const inPath = path.join(tmpDir, `in_${Date.now()}.pdf`);
-                  const outPath = path.join(tmpDir, `gs_out_${Date.now()}.pdf`);
-                  await fs.writeFile(inPath, bytes);
-                  await exec(`gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.6 -sOutputFile=${outPath} -f ${inPath} | cat`);
-                  bytes = await fs.readFile(outPath);
-                } catch {}
-              }
-              if (process.env.ENABLE_QPDF !== 'false') {
-                try {
-                  const tmpDir = path.join(__dirname, '..', 'tmp');
-                  const inPath = path.join(tmpDir, `in_${Date.now()}.pdf`);
-                  const outPath = path.join(tmpDir, `qpdf_out_${Date.now()}.pdf`);
-                  await fs.writeFile(inPath, bytes);
-                  await exec(`qpdf --linearize --stream-data=preserve --recompress-flate --object-streams=preserve --qdf ${inPath} ${outPath} | cat`);
-                  bytes = await fs.readFile(outPath);
-                } catch {}
-              }
-              bytes = await normalizeWithPdfLib(bytes);
+            }
 
-              // Watermarking
-              let pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
-              await applyCentralWatermark(pdfDoc, watermarkText);
-              const watermarkedBytes = await pdfDoc.save();
-              const documentHash = createHash('sha256').update(watermarkedBytes).digest('hex');
-              pdfDoc = await PDFDocument.load(watermarkedBytes);
-              await addSecurityFeatures(pdfDoc, watermarkText, documentHash);
-              const finalBytes = await pdfDoc.save();
-              
-              // Guardado y compresión
-              const tmpDir = path.join(__dirname, '..', 'tmp');
-              await fs.mkdir(tmpDir, { recursive: true });
-              const outName = file.name.replace(/\.pdf$/i, `_${Date.now()}.pdf`);
-              const outPath = path.join(tmpDir, outName);
-              await fs.writeFile(outPath, finalBytes);
-              const sendPath = await compressIfTooLarge(outPath);
-              const target = offerKey === 'bonus_ko' ? outputsBonus : outputsMain;
-              target.push({ path: sendPath, name: path.basename(sendPath) });
-            } catch (fileErr) {
-              console.error(`[FLOW] Error procesando ${file.name}:`, fileErr?.message);
+            // Fallback: si no hay URLs configuradas, buscar archivos locales
+            if (filesToProcess.length === 0) {
+              try {
+                const entries = await fs.readdir(config.dir, { withFileTypes: true });
+                const pdfFiles = entries.filter(e => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).map(e => ({
+                  name: e.name,
+                  path: path.join(config.dir, e.name),
+                  source: 'local'
+                }));
+                if (pdfFiles.length > 0) filesToProcess = pdfFiles;
+              } catch (e) {
+                if (e?.code !== 'ENOENT') throw e;
+              }
+            }
+            
+            if (filesToProcess.length === 0) {
+              console.warn(`[FLOW] No hay PDFs para pack '${offerKey}' (ni locales ni URLs)`);
               continue;
             }
+
+            console.log(`[FLOW] Procesando ${filesToProcess.length} PDFs...`);
+            for (const file of filesToProcess) {
+              try {
+                console.log(`[FLOW] - ${file.name} (${file.source})`);
+                let bytes;
+                if (file.source === 'local') {
+                  bytes = await fs.readFile(file.path);
+                } else {
+                  bytes = await downloadPdfWithDriveSupport(file.url);
+                  // Validar PDF y persistir en carpeta
+                  if (bytes.slice(0, 5).toString() !== '%PDF-') {
+                    throw new Error('Contenido descargado no parece ser PDF (sin cabecera %PDF-)');
+                  }
+                  await fs.mkdir(config.dir, { recursive: true });
+                  const dlPath = path.join(config.dir, file.name);
+                  await fs.writeFile(dlPath, bytes);
+                  // Leer desde disco a partir de aquí para unificar flujo
+                  bytes = await fs.readFile(dlPath);
+                }
+                
+                // Saneado y normalización
+                if (process.env.ENABLE_GS !== 'false') {
+                  try {
+                    const tmpDir = path.join(__dirname, '..', 'tmp');
+                    await fs.mkdir(tmpDir, { recursive: true });
+                    const inPath = path.join(tmpDir, `in_${Date.now()}.pdf`);
+                    const outPath = path.join(tmpDir, `gs_out_${Date.now()}.pdf`);
+                    await fs.writeFile(inPath, bytes);
+                    await exec(`gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.6 -sOutputFile=${outPath} -f ${inPath} | cat`);
+                    bytes = await fs.readFile(outPath);
+                  } catch {}
+                }
+                if (process.env.ENABLE_QPDF !== 'false') {
+                  try {
+                    const tmpDir = path.join(__dirname, '..', 'tmp');
+                    const inPath = path.join(tmpDir, `in_${Date.now()}.pdf`);
+                    const outPath = path.join(tmpDir, `qpdf_out_${Date.now()}.pdf`);
+                    await fs.writeFile(inPath, bytes);
+                    await exec(`qpdf --linearize --stream-data=preserve --recompress-flate --object-streams=preserve --qdf ${inPath} ${outPath} | cat`);
+                    bytes = await fs.readFile(outPath);
+                  } catch {}
+                }
+                bytes = await normalizeWithPdfLib(bytes);
+
+                // Watermarking
+                let pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
+                await applyCentralWatermark(pdfDoc, watermarkText);
+                const watermarkedBytes = await pdfDoc.save();
+                const documentHash = createHash('sha256').update(watermarkedBytes).digest('hex');
+                pdfDoc = await PDFDocument.load(watermarkedBytes);
+                await addSecurityFeatures(pdfDoc, watermarkText, documentHash);
+                const finalBytes = await pdfDoc.save();
+                
+                // Guardado y compresión
+                const tmpDir = path.join(__dirname, '..', 'tmp');
+                await fs.mkdir(tmpDir, { recursive: true });
+                const outName = file.name.replace(/\.pdf$/i, `_${Date.now()}.pdf`);
+                const outPath = path.join(tmpDir, outName);
+                await fs.writeFile(outPath, finalBytes);
+                const sendPath = await compressIfTooLarge(outPath);
+                const target = offerKey === 'bonus_ko' ? outputsBonus : outputsMain;
+                target.push({ path: sendPath, name: path.basename(sendPath) });
+              } catch (fileErr) {
+                console.error(`[FLOW] Error procesando ${file.name}:`, fileErr?.message);
+                continue;
+              }
+            }
           }
         }
-      }
 
-      if (!(offerKeys.length > 0)) {
-        console.log('[FLOW] Oferta no mapeada, no se procesa. Título recibido:', kajabiOfferTitle);
-        return;
-      }
+        if (!(offerKeys.length > 0)) {
+          console.log('[FLOW] Oferta no mapeada, no se procesa. Título recibido:', kajabiOfferTitle);
+          return;
+        }
 
-      console.log('[FLOW] Enviando email...');
-      const firstNameLocal = (firstName || (fullName ? String(fullName).split(' ')[0] : undefined));
-      
-      // SIEMPRE crear ZIP para keto_optimizado (correo principal)
-      await fs.mkdir(PERSISTENT_DIR, { recursive: true });
-      const zipName = `descargables_${Date.now()}.zip`;
-      const zipPath = path.join(PERSISTENT_DIR, zipName);
-      await new Promise((resolve, reject) => {
-        const output = fsSync.createWriteStream(zipPath);
-        const zip = archiver('zip', { zlib: { level: 9 } });
-        output.on('close', resolve);
-        zip.on('error', reject);
-        zip.pipe(output);
-        for (const f of outputsMain) zip.file(f.path, { name: f.name });
-        zip.finalize();
-      });
-      const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
-      downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS });
-      await saveTokensToDisk();
-      const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
-      const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
-      await sendEmailWithAttachments({
-        to: email,
-        subject: `Descargables ${kajabiOfferTitle || ''}`.trim(),
-        text: undefined,
-        attachments: [],
-        firstName: firstNameLocal,
-        downloadLink: link,
-        names: outputsMain.map(o => o.name.replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '').replace(/_/g, ' ')),
-      });
+        const generatedLinks = [];
 
-      // Enviar BONUS en correo separado si existe - SIEMPRE como ZIP
-      if (outputsBonus.length > 0) {
+        console.log('[FLOW] Enviando email...');
+        const firstNameLocal = (firstName || (fullName ? String(fullName).split(' ')[0] : undefined));
+        
+        // SIEMPRE crear ZIP para keto_optimizado (correo principal)
         await fs.mkdir(PERSISTENT_DIR, { recursive: true });
-        const zipName = `bonus_${Date.now()}.zip`;
+        const zipName = `descargables_${Date.now()}.zip`;
         const zipPath = path.join(PERSISTENT_DIR, zipName);
         await new Promise((resolve, reject) => {
           const output = fsSync.createWriteStream(zipPath);
@@ -909,7 +904,7 @@ if (pdfQueue && connection) {
           output.on('close', resolve);
           zip.on('error', reject);
           zip.pipe(output);
-          for (const f of outputsBonus) zip.file(f.path, { name: f.name });
+          for (const f of outputsMain) zip.file(f.path, { name: f.name });
           zip.finalize();
         });
         const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
@@ -917,19 +912,55 @@ if (pdfQueue && connection) {
         await saveTokensToDisk();
         const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
         const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
+        generatedLinks.push(link);
         await sendEmailWithAttachments({
           to: email,
-          subject: `Descargables ${kajabiOfferTitle || ''} - Bonus`.trim(),
+          subject: `Descargables ${kajabiOfferTitle || ''}`.trim(),
           text: undefined,
           attachments: [],
           firstName: firstNameLocal,
           downloadLink: link,
-          names: outputsBonus.map(o => o.name.replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '').replace(/_/g, ' ')),
+          names: outputsMain.map(o => o.name.replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '').replace(/_/g, ' ')),
         });
-      }
 
-      console.log('[FLOW] Email enviado');
-      await logSuccessfulJob({ fullName, email, kajabiOfferTitle, offerKeys });
+        // Enviar BONUS en correo separado si existe - SIEMPRE como ZIP
+        if (outputsBonus.length > 0) {
+          await fs.mkdir(PERSISTENT_DIR, { recursive: true });
+          const zipName = `bonus_${Date.now()}.zip`;
+          const zipPath = path.join(PERSISTENT_DIR, zipName);
+          await new Promise((resolve, reject) => {
+            const output = fsSync.createWriteStream(zipPath);
+            const zip = archiver('zip', { zlib: { level: 9 } });
+            output.on('close', resolve);
+            zip.on('error', reject);
+            zip.pipe(output);
+            for (const f of outputsBonus) zip.file(f.path, { name: f.name });
+            zip.finalize();
+          });
+          const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
+          downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS });
+          await saveTokensToDisk();
+          const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
+          const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
+          generatedLinks.push(link);
+          await sendEmailWithAttachments({
+            to: email,
+            subject: `Descargables ${kajabiOfferTitle || ''} - Bonus`.trim(),
+            text: undefined,
+            attachments: [],
+            firstName: firstNameLocal,
+            downloadLink: link,
+            names: outputsBonus.map(o => o.name.replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '').replace(/_/g, ' ')),
+          });
+        }
+
+        console.log('[FLOW] Email enviado');
+        await logJobEvent({ ...job.data, offerKeys, links: generatedLinks }, 'SUCCESS');
+      } catch (err) {
+        await logJobEvent(job.data, 'ERROR', err.message);
+        // Re-lanzamos el error para que BullMQ lo marque como fallido y reintente si procede
+        throw err;
+      }
     },
     { connection, concurrency: 1 }
   );
@@ -965,6 +996,36 @@ app.get('/logs/view', async (req, res) => {
     }
     console.error('[LOGS] Error al leer el archivo de log:', e);
     res.status(500).send('Error interno al leer el log.');
+  }
+});
+
+// Endpoint seguro para listar enlaces activos
+app.get('/links/active', async (req, res) => {
+  const { token } = req.query;
+  const adminToken = process.env.ADMIN_TOKEN;
+
+  if (!adminToken || token !== adminToken) {
+    return res.status(403).send('Acceso denegado.');
+  }
+
+  try {
+    const now = Date.now();
+    const activeLinks = [];
+    const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
+
+    for (const [token, data] of downloadTokens.entries()) {
+      if (now < data.expiresAt) {
+        activeLinks.push({
+          link: `${publicBase.replace(/\/$/, '')}/download/${token}`,
+          filename: data.filename,
+          expiresAt: new Date(data.expiresAt).toISOString(),
+        });
+      }
+    }
+    res.json(activeLinks);
+  } catch (e) {
+    console.error('[LINKS] Error al listar enlaces activos:', e);
+    res.status(500).send('Error interno al listar enlaces.');
   }
 });
 
