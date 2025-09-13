@@ -185,8 +185,21 @@ const ZIP_TTL_MS = 1000 * 60 * 60 * 72; // 72h
 // Usar directorio persistente que sobrevive a redeploys
 const PERSISTENT_DIR = process.env.PERSISTENT_STORAGE_PATH || path.join(__dirname, '..', 'persistent');
 const TOKENS_STORE = path.join(PERSISTENT_DIR, 'download_tokens.json');
+const LOG_FILE = path.join(PERSISTENT_DIR, 'processing.log');
 
 console.log(`[STORAGE] Usando directorio persistente en: ${PERSISTENT_DIR}`);
+
+async function logSuccessfulJob(jobData) {
+  try {
+    const { fullName, email, kajabiOfferTitle, offerKeys } = jobData;
+    const timestamp = new Date().toISOString();
+    const products = (Array.isArray(offerKeys) && offerKeys.length > 0) ? offerKeys.join(', ') : 'N/A';
+    const logEntry = `[${timestamp}] SUCCESS | Email: ${email} | Name: ${fullName} | Offer: ${kajabiOfferTitle || 'N/A'} | Products: [${products}]\n`;
+    await fs.appendFile(LOG_FILE, logEntry);
+  } catch (e) {
+    console.warn('[LOG] Failed to write to log file:', e?.message);
+  }
+}
 
 async function saveTokensToDisk() {
   try {
@@ -638,6 +651,7 @@ app.post('/webhook', async (req, res) => {
     }
 
     console.log('[FLOW] Email enviado');
+    await logSuccessfulJob({ fullName, email, kajabiOfferTitle, offerKeys });
 
     console.log(`Proceso completado para ${email}`);
 
@@ -915,6 +929,7 @@ if (pdfQueue && connection) {
       }
 
       console.log('[FLOW] Email enviado');
+      await logSuccessfulJob({ fullName, email, kajabiOfferTitle, offerKeys });
     },
     { connection, concurrency: 1 }
   );
@@ -930,6 +945,27 @@ const PORT = process.env.PORT || 3000;
 console.log('Binding on PORT=', PORT);
 app.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
+});
+
+// Endpoint seguro para ver el log de procesos
+app.get('/logs/view', async (req, res) => {
+  const { token } = req.query;
+  const adminToken = process.env.ADMIN_TOKEN;
+
+  if (!adminToken || token !== adminToken) {
+    return res.status(403).send('Acceso denegado.');
+  }
+
+  try {
+    const logContent = await fs.readFile(LOG_FILE, 'utf8');
+    res.type('text/plain').send(logContent);
+  } catch (e) {
+    if (e.code === 'ENOENT') {
+      return res.type('text/plain').send('El archivo de log aún no ha sido creado.');
+    }
+    console.error('[LOGS] Error al leer el archivo de log:', e);
+    res.status(500).send('Error interno al leer el log.');
+  }
 });
 
 // Endpoint de health extendido (cola)
