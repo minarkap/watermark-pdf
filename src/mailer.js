@@ -36,7 +36,7 @@ export async function sendEmailWithAttachments({ to, subject, text, attachments,
       `¡Ahora empieza tu cambio!\n\n` +
       `Aquí tienes los siguientes descargables PDF:\n\n` +
       `${bulletsText}\n\n` +
-      `Puedes descargarlos todos ellos pulsando el siguiente enlace (disponible durante 72 horas):\n${downloadLink}\n\n` +
+      `Puedes descargarlos todos ellos pulsando el siguiente enlace (disponible durante 5 días):\n${downloadLink}\n\n` +
       `Guárdalos bien en tu móvil, ordenador o imprímelos. Tenlos siempre a mano para que puedas acceder a ellos fácilmente y consigas tus objetivos.\n\n` +
       `¡Son tu mapa único de transformación!\n\n` +
       `Un abrazo intergaláctico 🪐\nPhil.`
@@ -50,7 +50,7 @@ export async function sendEmailWithAttachments({ to, subject, text, attachments,
         `<p>Muchísimas gracias por tu confianza :)<br/>¡Ahora empieza tu cambio!</p>` +
         `<p>Aquí tienes los siguientes descargables PDF:</p>` +
         `<ul style="margin:0 0 16px 20px;">${bulletsHtml}</ul>` +
-        `<p>Puedes descargarlos todos ellos pulsando el siguiente botón (disponible durante <strong>72 horas</strong>):</p>` +
+        `<p>Puedes descargarlos todos ellos pulsando el siguiente botón (disponible durante <strong>5 días</strong>):</p>` +
         `<p><a href="${link}" style="background:#FFC107;color:#000;text-decoration:none;font-weight:700;padding:12px 18px;border-radius:8px;display:inline-block">Descargar ahora</a></p>` +
         `<p>Guárdalos bien en tu móvil, ordenador o imprímelos. Tenlos siempre a mano para que puedas acceder a ellos fácilmente y consigas tus objetivos.</p>` +
         `<p>¡Son tu mapa único de transformación!</p>` +
