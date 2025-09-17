@@ -35,6 +35,7 @@ GMAIL_SENDER=
 # BASE_PDF_PATH=/usr/src/app/KO_ebook.pdf
 # BASE_PDF_URL=https://.../KO_ebook.pdf
 # KETO_OPTIMIZADO_URLS=[{"name":"Keto_Optimizado_Baja_kcal_2024.pdf","url":"https://.../Keto_Optimizado_Baja_kcal_2024.pdf"}]
+# EBOK_KO_URLS=[{"name":"Ebook_KO.pdf","url":"https://drive.google.com/..."}]
 
 # Storage persistente para descargas (sobrevive a redeploys)
 PERSISTENT_STORAGE_PATH=/app/persistent
@@ -105,7 +106,7 @@ Salud: `http://localhost:8080/health`
 3. Variables en Railway:
    - `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REDIRECT_URI`, `GMAIL_REFRESH_TOKEN`, `GMAIL_SENDER`.
    - No definas `PORT` (Railway la inyecta). El servicio ya hace bind a `process.env.PORT`.
-   - Opcionales: `KETO_OPTIMIZADO_URLS`, `BASE_PDF_URL`/`BASE_PDF_PATH` si usas flujos alternativos.
+   - Opcionales: `KETO_OPTIMIZADO_URLS`, `EBOK_KO_URLS`, `BASE_PDF_URL`/`BASE_PDF_PATH` si usas flujos alternativos.
 4. Prueba:
 ```bash
 curl -s https://<tu-app>.up.railway.app/health
@@ -117,6 +118,7 @@ curl -s https://<tu-app>.up.railway.app/health
 - `src/security.js` → banda superior (SVG→PNG), metadatos y hash.
 - `src/mailer.js` → envío vía Gmail API, particionado por tamaño.
 - `src/server.js` → endpoint, cola, normalización (Ghostscript + pdf-lib), orquestación.
+ - `descargables/ebook_ko/` → PDFs del pack "Ebook KO" (si no usas URLs por entorno).
 
 ## Problemas comunes
 - 502 en Railway: asegúrate de no fijar `PORT`; el contenedor debe escuchar en el puerto inyectado.
@@ -139,6 +141,7 @@ REDIS_URL=
 # Packs por URLs de Drive (JSON en una sola línea)
 KETO_OPTIMIZADO_URLS=[]
 KETO_FAST_URLS=[]
+EBOK_KO_URLS=[]
 LDL_COLESTEROL_URLS=[]
 CONTROL_APETITO_URLS=[]
 ANALITICAS_ESENCIALES_URLS=[]
