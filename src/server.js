@@ -416,12 +416,12 @@ app.post('/webhook', async (req, res) => {
     // Mapeo de títulos a carpetas y URLs (igual que en el worker)
     const offerMappings = {
       keto_optimizado: {
-        match: (t) => normalizeTitle(t).includes('keto optimizado'),
+        match: (t) => { const n = normalizeTitle(t); return n.includes('keto optimizado') && !n.includes('ebook'); },
         urls_env: 'KETO_OPTIMIZADO_URLS',
         dir: path.join(__dirname, '..', 'descargables', 'keto_optimizado'),
       },
       bonus_ko: {
-        match: (t) => normalizeTitle(t).includes('keto optimizado'),
+        match: (t) => { const n = normalizeTitle(t); return n.includes('keto optimizado') && !n.includes('ebook'); },
         urls_env: 'BONUS_KO_URLS',
         dir: path.join(__dirname, '..', 'descargables', 'bonus_ko'),
       },
@@ -454,6 +454,14 @@ app.post('/webhook', async (req, res) => {
         urls_env: 'ANALITICAS_ESENCIALES_URLS',
         dir: path.join(__dirname, '..', 'descargables', 'analiticas_esenciales'),
       },
+      ebook_keto_optimizado: {
+        match: (t) => {
+          const n = normalizeTitle(t);
+          return n.includes('ebook keto optimizado');
+        },
+        urls_env: 'EBOK_KO_URLS',
+        dir: path.join(__dirname, '..', 'descargables', 'ebook_keto_optimizado'),
+      },
     };
 
     const offerKeys = [];
@@ -465,6 +473,7 @@ app.post('/webhook', async (req, res) => {
 
     const outputsMain = [];
     const outputsBonus = [];
+    const outputsEbook = [];
     if (offerKeys.length > 0) {
       console.log(`[FLOW] Ofertas detectadas: ${offerKeys.join(', ')}`);
       for (const offerKey of offerKeys) {
@@ -591,7 +600,7 @@ app.post('/webhook', async (req, res) => {
             const outPath = path.join(tmpDir, outName);
             await fs.writeFile(outPath, finalBytes);
             const sendPath = await compressIfTooLarge(outPath);
-            const target = offerKey === 'bonus_ko' ? outputsBonus : outputsMain;
+            const target = offerKey === 'bonus_ko' ? outputsBonus : (offerKey === 'ebook_keto_optimizado' ? outputsEbook : outputsMain);
             target.push({ path: sendPath, name: path.basename(sendPath) });
           } catch (fileErr) {
             console.error(`[FLOW] Error procesando ${file.name}:`, fileErr?.message);
@@ -606,37 +615,71 @@ app.post('/webhook', async (req, res) => {
 
     const generatedLinks = [];
 
-    console.log('[FLOW] Enviando email principal...');
     const firstName = fullName ? String(fullName).split(' ')[0] : undefined;
-    
-    // SIEMPRE crear ZIP para keto_optimizado (correo principal)
-    await fs.mkdir(PERSISTENT_DIR, { recursive: true });
-    const zipName = `descargables_${Date.now()}.zip`;
-    const zipPath = path.join(PERSISTENT_DIR, zipName);
-    await new Promise((resolve, reject) => {
-      const output = fsSync.createWriteStream(zipPath);
-      const zip = archiver('zip', { zlib: { level: 9 } });
-      output.on('close', resolve);
-      zip.on('error', reject);
-      zip.pipe(output);
-      for (const f of outputsMain) zip.file(f.path, { name: f.name });
-      zip.finalize();
-    });
-    const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
-    downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS, user: { fullName, email, offer: kajabiOfferTitle } });
-    await saveTokensToDisk();
-    const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
-    const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
-    generatedLinks.push(link);
-    await sendEmailWithAttachments({
-      to: email,
-      subject: `Descargables ${kajabiOfferTitle || ''}`.trim(),
-      text: undefined,
-      attachments: [],
-      firstName: firstName,
-      downloadLink: link,
-      names: outputsMain.map(o => o.name.replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '').replace(/_/g, ' ')),
-    });
+
+    // Enviar correo principal solo si hay contenido principal
+    if (outputsMain.length > 0) {
+      console.log('[FLOW] Enviando email principal...');
+      await fs.mkdir(PERSISTENT_DIR, { recursive: true });
+      const zipName = `descargables_${Date.now()}.zip`;
+      const zipPath = path.join(PERSISTENT_DIR, zipName);
+      await new Promise((resolve, reject) => {
+        const output = fsSync.createWriteStream(zipPath);
+        const zip = archiver('zip', { zlib: { level: 9 } });
+        output.on('close', resolve);
+        zip.on('error', reject);
+        zip.pipe(output);
+        for (const f of outputsMain) zip.file(f.path, { name: f.name });
+        zip.finalize();
+      });
+      const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
+      downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS, user: { fullName, email, offer: kajabiOfferTitle } });
+      await saveTokensToDisk();
+      const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
+      const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
+      generatedLinks.push(link);
+      await sendEmailWithAttachments({
+        to: email,
+        subject: `Descargables ${kajabiOfferTitle || ''}`.trim(),
+        text: undefined,
+        attachments: [],
+        firstName: firstName,
+        downloadLink: link,
+        names: outputsMain.map(o => o.name.replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '').replace(/_/g, ' ')),
+      });
+    }
+
+    // Enviar correo específico para Ebook Keto Optimizado
+    if (outputsEbook.length > 0) {
+      console.log('[FLOW] Enviando email Ebook Keto Optimizado...');
+      await fs.mkdir(PERSISTENT_DIR, { recursive: true });
+      const zipName = `ebook_keto_optimizado_${Date.now()}.zip`;
+      const zipPath = path.join(PERSISTENT_DIR, zipName);
+      await new Promise((resolve, reject) => {
+        const output = fsSync.createWriteStream(zipPath);
+        const zip = archiver('zip', { zlib: { level: 9 } });
+        output.on('close', resolve);
+        zip.on('error', reject);
+        zip.pipe(output);
+        for (const f of outputsEbook) zip.file(f.path, { name: f.name });
+        zip.finalize();
+      });
+      const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
+      downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS, user: { fullName, email, offer: kajabiOfferTitle } });
+      await saveTokensToDisk();
+      const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
+      const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
+      generatedLinks.push(link);
+      await sendEmailWithAttachments({
+        to: email,
+        subject: 'Ebook Keto Optimizado',
+        text: undefined,
+        attachments: [],
+        firstName: firstName,
+        downloadLink: link,
+        names: outputsEbook.map(o => o.name.replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '').replace(/_/g, ' ')),
+      });
+    }
 
     // Enviar BONUS en correo separado si existe - SIEMPRE como ZIP
     if (outputsBonus.length > 0) {
@@ -707,12 +750,12 @@ if (pdfQueue && connection) {
         // Mapeo de títulos a carpetas y URLs
         const offerMappings = {
           keto_optimizado: {
-            match: (t) => normalizeTitle(t).includes('keto optimizado'),
+            match: (t) => { const n = normalizeTitle(t); return n.includes('keto optimizado') && !n.includes('ebook'); },
             urls_env: 'KETO_OPTIMIZADO_URLS',
             dir: path.join(__dirname, '..', 'descargables', 'keto_optimizado'),
           },
           bonus_ko: {
-            match: (t) => normalizeTitle(t).includes('keto optimizado'),
+            match: (t) => { const n = normalizeTitle(t); return n.includes('keto optimizado') && !n.includes('ebook'); },
             urls_env: 'BONUS_KO_URLS',
             dir: path.join(__dirname, '..', 'descargables', 'bonus_ko'),
           },
@@ -744,6 +787,14 @@ if (pdfQueue && connection) {
             },
             urls_env: 'ANALITICAS_ESENCIALES_URLS',
             dir: path.join(__dirname, '..', 'descargables', 'analiticas_esenciales'),
+          },
+          ebook_keto_optimizado: {
+            match: (t) => {
+              const n = normalizeTitle(t);
+              return n.includes('ebook keto optimizado');
+            },
+            urls_env: 'EBOK_KO_URLS',
+            dir: path.join(__dirname, '..', 'descargables', 'ebook_keto_optimizado'),
           }
         };
         
@@ -756,6 +807,7 @@ if (pdfQueue && connection) {
 
         const outputsMain = [];
         const outputsBonus = [];
+        const outputsEbook = [];
         if (offerKeys.length > 0) {
           console.log(`[FLOW] Ofertas detectadas: ${offerKeys.join(', ')}`);
           for (const offerKey of offerKeys) {
@@ -874,7 +926,7 @@ if (pdfQueue && connection) {
                 const outPath = path.join(tmpDir, outName);
                 await fs.writeFile(outPath, finalBytes);
                 const sendPath = await compressIfTooLarge(outPath);
-                const target = offerKey === 'bonus_ko' ? outputsBonus : outputsMain;
+                const target = offerKey === 'bonus_ko' ? outputsBonus : (offerKey === 'ebook_keto_optimizado' ? outputsEbook : outputsMain);
                 target.push({ path: sendPath, name: path.basename(sendPath) });
               } catch (fileErr) {
                 console.error(`[FLOW] Error procesando ${file.name}:`, fileErr?.message);
@@ -893,35 +945,68 @@ if (pdfQueue && connection) {
 
         console.log('[FLOW] Enviando email...');
         const firstNameLocal = (firstName || (fullName ? String(fullName).split(' ')[0] : undefined));
-        
-        // SIEMPRE crear ZIP para keto_optimizado (correo principal)
-        await fs.mkdir(PERSISTENT_DIR, { recursive: true });
-        const zipName = `descargables_${Date.now()}.zip`;
-        const zipPath = path.join(PERSISTENT_DIR, zipName);
-        await new Promise((resolve, reject) => {
-          const output = fsSync.createWriteStream(zipPath);
-          const zip = archiver('zip', { zlib: { level: 9 } });
-          output.on('close', resolve);
-          zip.on('error', reject);
-          zip.pipe(output);
-          for (const f of outputsMain) zip.file(f.path, { name: f.name });
-          zip.finalize();
-        });
-        const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
-        downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS, user: { fullName: job.data.fullName, email: job.data.email, offer: job.data.kajabiOfferTitle } });
-        await saveTokensToDisk();
-        const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
-        const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
-        generatedLinks.push(link);
-        await sendEmailWithAttachments({
-          to: email,
-          subject: `Descargables ${kajabiOfferTitle || ''}`.trim(),
-          text: undefined,
-          attachments: [],
-          firstName: firstNameLocal,
-          downloadLink: link,
-          names: outputsMain.map(o => o.name.replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '').replace(/_/g, ' ')),
-        });
+
+        // Correo principal solo si hay contenido principal
+        if (outputsMain.length > 0) {
+          await fs.mkdir(PERSISTENT_DIR, { recursive: true });
+          const zipName = `descargables_${Date.now()}.zip`;
+          const zipPath = path.join(PERSISTENT_DIR, zipName);
+          await new Promise((resolve, reject) => {
+            const output = fsSync.createWriteStream(zipPath);
+            const zip = archiver('zip', { zlib: { level: 9 } });
+            output.on('close', resolve);
+            zip.on('error', reject);
+            zip.pipe(output);
+            for (const f of outputsMain) zip.file(f.path, { name: f.name });
+            zip.finalize();
+          });
+          const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
+          downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS, user: { fullName: job.data.fullName, email: job.data.email, offer: job.data.kajabiOfferTitle } });
+          await saveTokensToDisk();
+          const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
+          const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
+          generatedLinks.push(link);
+          await sendEmailWithAttachments({
+            to: email,
+            subject: `Descargables ${kajabiOfferTitle || ''}`.trim(),
+            text: undefined,
+            attachments: [],
+            firstName: firstNameLocal,
+            downloadLink: link,
+            names: outputsMain.map(o => o.name.replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '').replace(/_/g, ' ')),
+          });
+        }
+
+        // Correo específico para Ebook Keto Optimizado
+        if (outputsEbook.length > 0) {
+          await fs.mkdir(PERSISTENT_DIR, { recursive: true });
+          const zipName = `ebook_keto_optimizado_${Date.now()}.zip`;
+          const zipPath = path.join(PERSISTENT_DIR, zipName);
+          await new Promise((resolve, reject) => {
+            const output = fsSync.createWriteStream(zipPath);
+            const zip = archiver('zip', { zlib: { level: 9 } });
+            output.on('close', resolve);
+            zip.on('error', reject);
+            zip.pipe(output);
+            for (const f of outputsEbook) zip.file(f.path, { name: f.name });
+            zip.finalize();
+          });
+          const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
+          downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS, user: { fullName: job.data.fullName, email: job.data.email, offer: job.data.kajabiOfferTitle } });
+          await saveTokensToDisk();
+          const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
+          const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
+          generatedLinks.push(link);
+          await sendEmailWithAttachments({
+            to: email,
+            subject: 'Ebook Keto Optimizado',
+            text: undefined,
+            attachments: [],
+            firstName: firstNameLocal,
+            downloadLink: link,
+            names: outputsEbook.map(o => o.name.replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '').replace(/_/g, ' ')),
+          });
+        }
 
         // Enviar BONUS en correo separado si existe - SIEMPRE como ZIP
         if (outputsBonus.length > 0) {
