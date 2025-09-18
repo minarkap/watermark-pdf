@@ -181,7 +181,7 @@ app.use(express.json({ limit: '2mb' }));
 
 // Storage persistente de zips por token (memoria + disco)
 const downloadTokens = new Map(); // token -> { path, expiresAt, filename }
-const ZIP_TTL_MS = 1000 * 60 * 60 * 24 * 5; // 5 days
+const ZIP_TTL_MS = 1000 * 60 * 60 * 24 * 14; // 14 days
 // Usar directorio persistente que sobrevive a redeploys
 const PERSISTENT_DIR = process.env.PERSISTENT_STORAGE_PATH || path.join(__dirname, '..', 'persistent');
 const TOKENS_STORE = path.join(PERSISTENT_DIR, 'download_tokens.json');
