@@ -632,7 +632,7 @@ app.post('/webhook', async (req, res) => {
       zip.finalize();
     });
     const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
-    downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS, user: { fullName, email, offer: kajabiOfferTitle } });
+    downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS, user: { fullName, email, offer: kajabiOfferTitle, source } });
     await saveTokensToDisk();
     const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
     const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
@@ -663,7 +663,7 @@ app.post('/webhook', async (req, res) => {
         zip.finalize();
       });
       const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
-      downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS, user: { fullName, email, offer: kajabiOfferTitle } });
+      downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS, user: { fullName, email, offer: kajabiOfferTitle, source } });
       await saveTokensToDisk();
       const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
       const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
@@ -955,7 +955,7 @@ app.post('/webhook/hotmart', async (req, res) => {
           zip.finalize();
         });
         const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
-        downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS, user: { fullName, email, offer: kajabiOfferTitle } });
+        downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS, user: { fullName, email, offer: kajabiOfferTitle, source: 'hotmart' } });
         await saveTokensToDisk();
         const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
         const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
@@ -984,7 +984,7 @@ app.post('/webhook/hotmart', async (req, res) => {
             zip.finalize();
           });
           const tokenB = createHash('sha256').update(zipNameB + Math.random()).digest('hex').slice(0, 32);
-          downloadTokens.set(tokenB, { path: zipPathB, filename: zipNameB, expiresAt: Date.now() + ZIP_TTL_MS, user: { fullName, email, offer: kajabiOfferTitle } });
+          downloadTokens.set(tokenB, { path: zipPathB, filename: zipNameB, expiresAt: Date.now() + ZIP_TTL_MS, user: { fullName, email, offer: kajabiOfferTitle, source: 'hotmart' } });
           await saveTokensToDisk();
           const linkB = `${publicBase.replace(/\/$/, '')}/download/${tokenB}`;
           generatedLinks.push(linkB);
@@ -1245,7 +1245,7 @@ if (pdfQueue && connection) {
           zip.finalize();
         });
         const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
-        downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS, user: { fullName: job.data.fullName, email: job.data.email, offer: job.data.kajabiOfferTitle } });
+        downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS, user: { fullName: job.data.fullName, email: job.data.email, offer: job.data.kajabiOfferTitle, source: 'kajabi' } });
         await saveTokensToDisk();
         const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
         const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
@@ -1275,7 +1275,7 @@ if (pdfQueue && connection) {
             zip.finalize();
           });
           const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
-          downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS, user: { fullName: job.data.fullName, email: job.data.email, offer: job.data.kajabiOfferTitle } });
+          downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS, user: { fullName: job.data.fullName, email: job.data.email, offer: job.data.kajabiOfferTitle, source: 'kajabi' } });
           await saveTokensToDisk();
           const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
           const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
