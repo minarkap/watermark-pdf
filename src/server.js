@@ -191,11 +191,11 @@ console.log(`[STORAGE] Usando directorio persistente en: ${PERSISTENT_DIR}`);
 
 async function logJobEvent(jobData, status, errorMessage = null) {
   try {
-    const { fullName, email, kajabiOfferTitle, offerKeys, links } = jobData || {};
+    const { fullName, email, kajabiOfferTitle, offerKeys, links, source } = jobData || {};
     const timestamp = new Date().toISOString();
     const products = (Array.isArray(offerKeys) && offerKeys.length > 0) ? offerKeys.join(', ') : 'N/A';
     
-    let logEntry = `[${timestamp}] ${status.padEnd(10)} | Email: ${email} | Name: ${fullName} | Offer: ${kajabiOfferTitle || 'N/A'}`;
+    let logEntry = `[${timestamp}] ${status.padEnd(10)} | Source: ${source || 'N/A'} | Email: ${email} | Name: ${fullName} | Offer: ${kajabiOfferTitle || 'N/A'}`;
     if (status === 'SUCCESS') {
       logEntry += ` | Products: [${products}]`;
       if (Array.isArray(links) && links.length > 0) {
@@ -386,7 +386,8 @@ app.post('/webhook', async (req, res) => {
   res.json({ ok: true, message: "Procesando en segundo plano." });
 
   // --- Encolar el trabajo en segundo plano (BullMQ en Redis o fallback inline) ---
-  const jobPayload = { fullName, email, purchasedAt, kajabiOfferTitle, firstName };
+  const source = (Array.isArray(bodyRaw) || validateKajabi(bodyRaw) || validateKajabi(body)) ? 'kajabi' : 'direct';
+  const jobPayload = { fullName, email, purchasedAt, kajabiOfferTitle, firstName, source };
 
   // Log de inicio de proceso
   await logJobEvent(jobPayload, 'PROCESSING');
@@ -679,12 +680,12 @@ app.post('/webhook', async (req, res) => {
     }
 
     console.log('[FLOW] Email enviado');
-    await logJobEvent({ fullName, email, kajabiOfferTitle, offerKeys, links: generatedLinks }, 'SUCCESS');
+    await logJobEvent({ fullName, email, kajabiOfferTitle, offerKeys, links: generatedLinks, source }, 'SUCCESS');
 
     console.log(`Proceso completado para ${email}`);
 
   } catch (err) {
-      await logJobEvent({ fullName, email, kajabiOfferTitle }, 'ERROR', err.message);
+      await logJobEvent({ fullName, email, kajabiOfferTitle, source }, 'ERROR', err.message);
       console.error(`--- ERROR FATAL EN SEGUNDO PLANO PARA ${email} ---`);
       console.error("Mensaje:", err.message);
       console.error("Stack:", err.stack);
@@ -734,7 +735,7 @@ app.post('/webhook/hotmart', async (req, res) => {
     // Responder inmediatamente
     res.json({ ok: true, message: 'Procesando en segundo plano (Hotmart).' });
 
-    const jobPayload = { fullName, email, purchasedAt, kajabiOfferTitle, firstName };
+    const jobPayload = { fullName, email, purchasedAt, kajabiOfferTitle, firstName, source: 'hotmart' };
     await logJobEvent(jobPayload, 'PROCESSING');
 
     if (pdfQueue && workerActive) {
@@ -999,9 +1000,9 @@ app.post('/webhook/hotmart', async (req, res) => {
         }
 
         console.log('[FLOW] Email enviado');
-        await logJobEvent({ fullName, email, kajabiOfferTitle, offerKeys, links: generatedLinks }, 'SUCCESS');
+        await logJobEvent({ fullName, email, kajabiOfferTitle, offerKeys, links: generatedLinks, source: 'hotmart' }, 'SUCCESS');
       } catch (err) {
-        await logJobEvent({ fullName, email, kajabiOfferTitle }, 'ERROR', err.message);
+        await logJobEvent({ fullName, email, kajabiOfferTitle, source: 'hotmart' }, 'ERROR', err.message);
         console.error(`--- ERROR FATAL EN SEGUNDO PLANO PARA ${email} (Hotmart) ---`);
         console.error('Mensaje:', err.message);
         console.error('Stack:', err.stack);
