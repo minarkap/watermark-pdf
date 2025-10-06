@@ -481,30 +481,26 @@ app.post('/webhook', async (req, res) => {
         console.log(`[FLOW] Procesando pack '${offerKey}'...`);
         let filesToProcess = [];
 
-        // Siempre procesar TODOS los archivos de las URLs (tanto locales como remotos)
+        // Procesar por URLs si se definen; si se define como [] se omite el pack
         const urlsJson = process.env[config.urls_env];
-        if (urlsJson) {
+        let urlsExplicitlySet = false;
+        if (typeof urlsJson !== 'undefined') {
+          urlsExplicitlySet = true;
           try {
             const list = JSON.parse(urlsJson);
-            if (Array.isArray(list) && list.length > 0) {
+            if (Array.isArray(list)) {
+              if (list.length === 0) {
+                console.warn(`[FLOW] ${config.urls_env} está vacío; se omite pack '${offerKey}'`);
+                continue; // no procesar este pack ni por local
+              }
               filesToProcess = list.map(item => {
                 const localPath = path.join(config.dir, item.name);
-                // Verificar si el archivo ya está descargado localmente
                 try {
                   if (fsSync.existsSync(localPath)) {
-                    return {
-                      name: item.name,
-                      path: localPath,
-                      source: 'local'
-                    };
+                    return { name: item.name, path: localPath, source: 'local' };
                   }
                 } catch {}
-                // Si no está local, marcar para descarga remota
-                return {
-                  name: item.name,
-                  url: item.url,
-                  source: 'remote'
-                };
+                return { name: item.name, url: item.url, source: 'remote' };
               });
             }
           } catch {
@@ -512,8 +508,8 @@ app.post('/webhook', async (req, res) => {
           }
         }
 
-        // Fallback: si no hay URLs configuradas, buscar archivos locales
-        if (filesToProcess.length === 0) {
+        // Fallback: solo si la variable no está definida
+        if (!urlsExplicitlySet && filesToProcess.length === 0) {
           try {
             const entries = await fs.readdir(config.dir, { withFileTypes: true });
             const pdfFiles = entries.filter(e => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).map(e => ({
@@ -610,6 +606,13 @@ app.post('/webhook', async (req, res) => {
       }
     } else {
       console.log('[FLOW] Oferta no mapeada, no se procesa. Título recibido:', kajabiOfferTitle);
+      return;
+    }
+
+    // Si no se generó nada, no enviar emails ni crear zips
+    if (outputsMain.length === 0 && outputsBonus.length === 0) {
+      console.warn('[FLOW] No hay ningún PDF procesado; se omite envío de email.');
+      await logJobEvent({ fullName, email, kajabiOfferTitle, offerKeys, source }, 'IGNORED');
       return;
     }
 
@@ -1100,30 +1103,26 @@ if (pdfQueue && connection) {
             console.log(`[FLOW] Procesando pack '${offerKey}'...`);
             let filesToProcess = [];
 
-            // Siempre procesar TODOS los archivos de las URLs (tanto locales como remotos)
+            // Procesar por URLs si se definen; si se define como [] se omite el pack
             const urlsJson = process.env[config.urls_env];
-            if (urlsJson) {
+            let urlsExplicitlySet = false;
+            if (typeof urlsJson !== 'undefined') {
+              urlsExplicitlySet = true;
               try {
                 const list = JSON.parse(urlsJson);
-                if (Array.isArray(list) && list.length > 0) {
+                if (Array.isArray(list)) {
+                  if (list.length === 0) {
+                    console.warn(`[FLOW] ${config.urls_env} está vacío; se omite pack '${offerKey}'`);
+                    continue;
+                  }
                   filesToProcess = list.map(item => {
                     const localPath = path.join(config.dir, item.name);
-                    // Verificar si el archivo ya está descargado localmente
                     try {
                       if (fsSync.existsSync(localPath)) {
-                        return {
-                          name: item.name,
-                          path: localPath,
-                          source: 'local'
-                        };
+                        return { name: item.name, path: localPath, source: 'local' };
                       }
                     } catch {}
-                    // Si no está local, marcar para descarga remota
-                    return {
-                      name: item.name,
-                      url: item.url,
-                      source: 'remote'
-                    };
+                    return { name: item.name, url: item.url, source: 'remote' };
                   });
                 }
               } catch {
@@ -1131,8 +1130,8 @@ if (pdfQueue && connection) {
               }
             }
 
-            // Fallback: si no hay URLs configuradas, buscar archivos locales
-            if (filesToProcess.length === 0) {
+            // Fallback: solo si la variable no está definida
+            if (!urlsExplicitlySet && filesToProcess.length === 0) {
               try {
                 const entries = await fs.readdir(config.dir, { withFileTypes: true });
                 const pdfFiles = entries.filter(e => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).map(e => ({
@@ -1223,6 +1222,13 @@ if (pdfQueue && connection) {
 
         if (!(offerKeys.length > 0)) {
           console.log('[FLOW] Oferta no mapeada, no se procesa. Título recibido:', kajabiOfferTitle);
+          return;
+        }
+
+        // Si no se generó nada, no enviar emails ni crear zips
+        if (outputsMain.length === 0 && outputsBonus.length === 0) {
+          console.warn('[FLOW] No hay ningún PDF procesado; se omite envío de email.');
+          await logJobEvent({ ...job.data, offerKeys }, 'IGNORED');
           return;
         }
 
