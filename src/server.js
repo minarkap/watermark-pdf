@@ -694,6 +694,326 @@ app.post('/webhook', async (req, res) => {
   await job();
 });
 
+// Webhook Hotmart (PURCHASE_APPROVED)
+app.post('/webhook/hotmart', async (req, res) => {
+  try {
+    const raw = req.body || {};
+    const wrapper = Array.isArray(raw) ? (raw[0] || {}) : raw;
+    // El test de Hotmart puede envolver el payload en { headers, params, body }
+    const hotmart = (wrapper && wrapper.body && wrapper.body.data) ? wrapper.body : wrapper;
+
+    const event = hotmart?.event || hotmart?.data?.event;
+    const status = hotmart?.data?.purchase?.status;
+    if (event && String(event).toUpperCase() !== 'PURCHASE_APPROVED') {
+      return res.json({ ok: true, message: 'Evento ignorado' });
+    }
+    if (status && String(status).toUpperCase() !== 'APPROVED') {
+      return res.json({ ok: true, message: 'Compra no aprobada' });
+    }
+
+    const buyer = hotmart?.data?.buyer || {};
+    const purchase = hotmart?.data?.purchase || {};
+    const product = hotmart?.data?.product || {};
+
+    const email = buyer?.email;
+    const firstName = buyer?.first_name || undefined;
+    const lastName = buyer?.last_name || undefined;
+    const fullName = (firstName && lastName) ? `${firstName} ${lastName}` : (buyer?.name || undefined);
+    const purchasedAt = purchase?.approved_date ? new Date(purchase.approved_date).toISOString() : undefined;
+
+    const productNames = Array.isArray(product?.content?.products)
+      ? product.content.products.map(p => p?.name).filter(Boolean)
+      : [];
+    if (product?.name) productNames.push(product.name);
+    const kajabiOfferTitle = productNames.join(' | ') || product?.name || '';
+
+    if (!fullName || !email) {
+      return res.status(400).json({ error: 'Faltan parámetros: fullName y email son requeridos' });
+    }
+
+    // Responder inmediatamente
+    res.json({ ok: true, message: 'Procesando en segundo plano (Hotmart).' });
+
+    const jobPayload = { fullName, email, purchasedAt, kajabiOfferTitle, firstName };
+    await logJobEvent(jobPayload, 'PROCESSING');
+
+    if (pdfQueue && workerActive) {
+      const jobId = `${email}:${purchasedAt || ''}:${kajabiOfferTitle || ''}`;
+      await pdfQueue.add('process', jobPayload, {
+        jobId,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 30000 },
+        removeOnComplete: true,
+        removeOnFail: { count: 10 },
+      });
+      return;
+    }
+
+    // Fallback inline (misma lógica que /webhook)
+    const job = async () => {
+      try {
+        const timestamp = purchasedAt || new Date().toISOString();
+        const watermarkText = `${fullName} | ${email} | ${timestamp}`;
+
+        const normalizeTitle = (s) => (s || '').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        const offerMappings = {
+          keto_optimizado: {
+            match: (t) => normalizeTitle(t).includes('keto optimizado'),
+            urls_env: 'KETO_OPTIMIZADO_URLS',
+            dir: path.join(__dirname, '..', 'descargables', 'keto_optimizado'),
+          },
+          bonus_ko: {
+            match: (t) => normalizeTitle(t).includes('keto optimizado'),
+            urls_env: 'BONUS_KO_URLS',
+            dir: path.join(__dirname, '..', 'descargables', 'bonus_ko'),
+          },
+          keto_fast: {
+            match: (t) => {
+              const n = normalizeTitle(t);
+              return n.includes('keto fast') || n.includes('keto-fast');
+            },
+            urls_env: 'KETO_FAST_URLS',
+            dir: path.join(__dirname, '..', 'descargables', 'keto_fast'),
+          },
+          ebook_ko: {
+            match: (t) => {
+              const n = normalizeTitle(t);
+              return n.includes('ebook ko');
+            },
+            urls_env: 'EBOK_KO_URLS',
+            dir: path.join(__dirname, '..', 'descargables', 'ebook_ko'),
+          },
+          ldl_colesterol: {
+            match: (t) => normalizeTitle(t).includes('colesterol'),
+            urls_env: 'LDL_COLESTEROL_URLS',
+            dir: path.join(__dirname, '..', 'descargables', 'ldl_colesterol'),
+          },
+          control_apetito: {
+            match: (t) => {
+              const n = normalizeTitle(t);
+              return n.includes('ebook') && n.includes('control absoluto del apetito');
+            },
+            urls_env: 'CONTROL_APETITO_URLS',
+            dir: path.join(__dirname, '..', 'descargables', 'control_apetito'),
+          },
+          analiticas_esenciales: {
+            match: (t) => {
+              const n = normalizeTitle(t);
+              return n.includes('analiticas esenciales');
+            },
+            urls_env: 'ANALITICAS_ESENCIALES_URLS',
+            dir: path.join(__dirname, '..', 'descargables', 'analiticas_esenciales'),
+          },
+        };
+
+        const offerKeys = [];
+        for (const [key, config] of Object.entries(offerMappings)) {
+          if (kajabiOfferTitle && typeof config.match === 'function' && config.match(kajabiOfferTitle)) {
+            offerKeys.push(key);
+          }
+        }
+
+        const outputsMain = [];
+        const outputsBonus = [];
+        if (offerKeys.length > 0) {
+          console.log(`[FLOW] Ofertas detectadas: ${offerKeys.join(', ')}`);
+          for (const offerKey of offerKeys) {
+            const config = offerMappings[offerKey];
+            console.log(`[FLOW] Procesando pack '${offerKey}'...`);
+            let filesToProcess = [];
+
+            const urlsJson = process.env[config.urls_env];
+            if (urlsJson) {
+              try {
+                const list = JSON.parse(urlsJson);
+                if (Array.isArray(list) && list.length > 0) {
+                  filesToProcess = list.map(item => {
+                    const localPath = path.join(config.dir, item.name);
+                    try {
+                      if (fsSync.existsSync(localPath)) {
+                        return { name: item.name, path: localPath, source: 'local' };
+                      }
+                    } catch {}
+                    return { name: item.name, url: item.url, source: 'remote' };
+                  });
+                }
+              } catch {
+                throw new Error(`${config.urls_env} no es un JSON válido`);
+              }
+            }
+
+            if (filesToProcess.length === 0) {
+              try {
+                const entries = await fs.readdir(config.dir, { withFileTypes: true });
+                const pdfFiles = entries.filter(e => e.isFile() && e.name.toLowerCase().endsWith('.pdf')).map(e => ({
+                  name: e.name,
+                  path: path.join(config.dir, e.name),
+                  source: 'local'
+                }));
+                if (pdfFiles.length > 0) filesToProcess = pdfFiles;
+              } catch (e) {
+                if (e?.code !== 'ENOENT') throw e;
+              }
+            }
+
+            if (filesToProcess.length === 0) {
+              console.warn(`[FLOW] No hay PDFs para pack '${offerKey}' (ni locales ni URLs)`);
+              continue;
+            }
+
+            console.log(`[FLOW] Procesando ${filesToProcess.length} PDFs...`);
+            for (const file of filesToProcess) {
+              try {
+                console.log(`[FLOW] - ${file.name} (${file.source})`);
+                let bytes;
+                if (file.source === 'local') {
+                  bytes = await fs.readFile(file.path);
+                } else {
+                  const downloadKey = file.url;
+                  if (downloadPromises.has(downloadKey)) {
+                    console.log(`[DL] Esperando descarga concurrente de ${file.name}...`);
+                    bytes = await downloadPromises.get(downloadKey);
+                  } else {
+                    const promise = (async () => {
+                      const b = await downloadPdfWithDriveSupport(file.url);
+                      if (b.slice(0, 5).toString() !== '%PDF-') {
+                        throw new Error('Contenido descargado no parece ser PDF (sin cabecera %PDF-)');
+                      }
+                      await fs.mkdir(config.dir, { recursive: true });
+                      const dlPath = path.join(config.dir, file.name);
+                      await fs.writeFile(dlPath, b);
+                      return fs.readFile(dlPath);
+                    })();
+                    downloadPromises.set(downloadKey, promise);
+                    try { bytes = await promise; } finally { downloadPromises.delete(downloadKey); }
+                  }
+                }
+
+                if (process.env.ENABLE_GS !== 'false') {
+                  try {
+                    const tmpDir = path.join(__dirname, '..', 'tmp');
+                    await fs.mkdir(tmpDir, { recursive: true });
+                    const inPath = path.join(tmpDir, `in_${Date.now()}.pdf`);
+                    const outPath = path.join(tmpDir, `gs_out_${Date.now()}.pdf`);
+                    await fs.writeFile(inPath, bytes);
+                    await exec(`gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.6 -sOutputFile=${outPath} -f ${inPath} | cat`);
+                    bytes = await fs.readFile(outPath);
+                  } catch {}
+                }
+                if (process.env.ENABLE_QPDF !== 'false') {
+                  try {
+                    const tmpDir = path.join(__dirname, '..', 'tmp');
+                    const inPath = path.join(tmpDir, `in_${Date.now()}.pdf`);
+                    const outPath = path.join(tmpDir, `qpdf_out_${Date.now()}.pdf`);
+                    await fs.writeFile(inPath, bytes);
+                    await exec(`qpdf --linearize --stream-data=preserve --recompress-flate --object-streams=preserve --qdf ${inPath} ${outPath} | cat`);
+                    bytes = await fs.readFile(outPath);
+                  } catch {}
+                }
+                bytes = await normalizeWithPdfLib(bytes);
+                let pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
+                await applyCentralWatermark(pdfDoc, watermarkText);
+                const watermarkedBytes = await pdfDoc.save();
+                const documentHash = createHash('sha256').update(watermarkedBytes).digest('hex');
+                pdfDoc = await PDFDocument.load(watermarkedBytes);
+                await addSecurityFeatures(pdfDoc, watermarkText, documentHash);
+                const finalBytes = await pdfDoc.save();
+                const tmpDir = path.join(__dirname, '..', 'tmp');
+                await fs.mkdir(tmpDir, { recursive: true });
+                const outName = file.name.replace(/\.pdf$/i, `_${Date.now()}.pdf`);
+                const outPath = path.join(tmpDir, outName);
+                await fs.writeFile(outPath, finalBytes);
+                const sendPath = await compressIfTooLarge(outPath);
+                const target = offerKey === 'bonus_ko' ? outputsBonus : outputsMain;
+                target.push({ path: sendPath, name: path.basename(sendPath) });
+              } catch (fileErr) {
+                console.error(`[FLOW] Error procesando ${file.name}:`, fileErr?.message);
+                continue;
+              }
+            }
+          }
+        } else {
+          console.log('[FLOW] Oferta no mapeada, no se procesa. Título recibido (Hotmart):', kajabiOfferTitle);
+          return;
+        }
+
+        const generatedLinks = [];
+        console.log('[FLOW] Enviando email principal...');
+        const firstNameLocal = (firstName || (fullName ? String(fullName).split(' ')[0] : undefined));
+
+        await fs.mkdir(PERSISTENT_DIR, { recursive: true });
+        const zipName = `descargables_${Date.now()}.zip`;
+        const zipPath = path.join(PERSISTENT_DIR, zipName);
+        await new Promise((resolve, reject) => {
+          const output = fsSync.createWriteStream(zipPath);
+          const zip = archiver('zip', { zlib: { level: 9 } });
+          output.on('close', resolve);
+          zip.on('error', reject);
+          zip.pipe(output);
+          for (const f of outputsMain) zip.file(f.path, { name: f.name });
+          zip.finalize();
+        });
+        const token = createHash('sha256').update(zipName + Math.random()).digest('hex').slice(0, 32);
+        downloadTokens.set(token, { path: zipPath, filename: zipName, expiresAt: Date.now() + ZIP_TTL_MS, user: { fullName, email, offer: kajabiOfferTitle } });
+        await saveTokensToDisk();
+        const publicBase = process.env.PUBLIC_BASE_URL || `https://` + (process.env.RAILWAY_STATIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '');
+        const link = `${publicBase.replace(/\/$/, '')}/download/${token}`;
+        generatedLinks.push(link);
+        await sendEmailWithAttachments({
+          to: email,
+          subject: `Descargables ${kajabiOfferTitle || ''}`.trim(),
+          text: undefined,
+          attachments: [],
+          firstName: firstNameLocal,
+          downloadLink: link,
+          names: outputsMain.map(o => o.name.replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '').replace(/_/g, ' ')),
+        });
+
+        if (outputsBonus.length > 0) {
+          await fs.mkdir(PERSISTENT_DIR, { recursive: true });
+          const zipNameB = `bonus_${Date.now()}.zip`;
+          const zipPathB = path.join(PERSISTENT_DIR, zipNameB);
+          await new Promise((resolve, reject) => {
+            const output = fsSync.createWriteStream(zipPathB);
+            const zip = archiver('zip', { zlib: { level: 9 } });
+            output.on('close', resolve);
+            zip.on('error', reject);
+            zip.pipe(output);
+            for (const f of outputsBonus) zip.file(f.path, { name: f.name });
+            zip.finalize();
+          });
+          const tokenB = createHash('sha256').update(zipNameB + Math.random()).digest('hex').slice(0, 32);
+          downloadTokens.set(tokenB, { path: zipPathB, filename: zipNameB, expiresAt: Date.now() + ZIP_TTL_MS, user: { fullName, email, offer: kajabiOfferTitle } });
+          await saveTokensToDisk();
+          const linkB = `${publicBase.replace(/\/$/, '')}/download/${tokenB}`;
+          generatedLinks.push(linkB);
+          await sendEmailWithAttachments({
+            to: email,
+            subject: `Descargables ${kajabiOfferTitle || ''} - Bonus`.trim(),
+            text: undefined,
+            attachments: [],
+            firstName: firstNameLocal,
+            downloadLink: linkB,
+            names: outputsBonus.map(o => o.name.replace(/_\d+\.pdf$/i, '').replace(/\.pdf$/i, '').replace(/_/g, ' ')),
+          });
+        }
+
+        console.log('[FLOW] Email enviado');
+        await logJobEvent({ fullName, email, kajabiOfferTitle, offerKeys, links: generatedLinks }, 'SUCCESS');
+      } catch (err) {
+        await logJobEvent({ fullName, email, kajabiOfferTitle }, 'ERROR', err.message);
+        console.error(`--- ERROR FATAL EN SEGUNDO PLANO PARA ${email} (Hotmart) ---`);
+        console.error('Mensaje:', err.message);
+        console.error('Stack:', err.stack);
+      }
+    };
+    await job();
+  } catch (e) {
+    console.error('[HOTMART] Error inesperado:', e?.message);
+    res.status(200).json({ ok: true });
+  }
+});
+
 // Worker (si hay Redis) – procesa en el mismo contenedor
 if (pdfQueue && connection) {
   try {
