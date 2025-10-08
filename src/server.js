@@ -15,6 +15,7 @@ import { Queue, Worker } from 'bullmq';
 import IORedis from 'ioredis';
 import Ajv from 'ajv';
 import archiver from 'archiver';
+import multer from 'multer';
 const exec = promisify(execCb);
 
 // Lock para descargas concurrentes en modo inline/worker
@@ -178,6 +179,7 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
 // Storage persistente de zips por token (memoria + disco)
 const downloadTokens = new Map(); // token -> { path, expiresAt, filename }
@@ -359,6 +361,104 @@ app.get('/redis-test', async (req, res) => {
 // Rutas
 app.get('/health', (_req, res) => {
   res.json({ ok: true });
+});
+
+// UI simple para aplicar watermark manualmente
+app.get('/watermark', (_req, res) => {
+  const html = `<!doctype html>
+  <html lang="es">
+  <head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>Aplicar Watermark</title>
+    <style>
+      body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;padding:24px;max-width:760px;margin:0 auto;}
+      label{display:block;margin:10px 0 4px;font-weight:600}
+      input[type=text],input[type=email],input[type=datetime-local]{width:100%;padding:10px;border:1px solid #ccc;border-radius:8px}
+      input[type=file]{padding:6px}
+      .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+      .hint{color:#666;font-size:12px;margin-top:4px}
+      button{background:#111;color:#fff;border:0;padding:12px 16px;border-radius:8px;font-weight:700;margin-top:16px;cursor:pointer}
+      .card{background:#fafafa;border:1px solid #eee;border-radius:12px;padding:16px}
+    </style>
+  </head>
+  <body>
+    <h1>Aplicar Watermark a un PDF</h1>
+    <form method="post" action="/watermark" enctype="multipart/form-data" class="card">
+      <label>PDF</label>
+      <input type="file" name="pdf" accept="application/pdf" required />
+      <div class="row">
+        <div>
+          <label>Nombre completo</label>
+          <input type="text" name="fullName" placeholder="Nombre Apellido" />
+        </div>
+        <div>
+          <label>Email</label>
+          <input type="email" name="email" placeholder="user@example.com" />
+        </div>
+      </div>
+      <label>Fecha/hora (opcional)</label>
+      <input type="datetime-local" name="timestamp" />
+      <label>Texto personalizado (opcional)</label>
+      <input type="text" name="text" placeholder="Sobrescribe nombre | email | fecha" />
+      <div class="hint">Si indicas "Texto personalizado", se usará tal cual como watermark.</div>
+      <button type="submit">Generar PDF con Watermark</button>
+    </form>
+  </body>
+  </html>`;
+  res.type('html').send(html);
+});
+
+app.post('/watermark', upload.single('pdf'), async (req, res) => {
+  try {
+    if (!req?.file?.buffer) return res.status(400).send('Falta el archivo PDF');
+    const originalName = String(req.file.originalname || 'document.pdf').replace(/[^a-zA-Z0-9_. -]/g, '_');
+    const { fullName, email } = req.body || {};
+    const ts = req.body?.timestamp ? new Date(req.body.timestamp).toISOString() : new Date().toISOString();
+    const text = (req.body?.text || '').trim();
+    const watermarkText = text || `${fullName || ''} | ${email || ''} | ${ts}`;
+
+    // Pipeline ligero reutilizando utilidades existentes
+    let bytes = req.file.buffer;
+    if (process.env.ENABLE_GS !== 'false') {
+      try {
+        const tmpDir = path.join(__dirname, '..', 'tmp');
+        await fs.mkdir(tmpDir, { recursive: true });
+        const inPath = path.join(tmpDir, `ui_in_${Date.now()}.pdf`);
+        const outPath = path.join(tmpDir, `ui_gs_${Date.now()}.pdf`);
+        await fs.writeFile(inPath, bytes);
+        await exec(`gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.6 -sOutputFile=${outPath} -f ${inPath} | cat`);
+        bytes = await fs.readFile(outPath);
+      } catch {}
+    }
+    if (process.env.ENABLE_QPDF !== 'false') {
+      try {
+        const tmpDir = path.join(__dirname, '..', 'tmp');
+        const inPath = path.join(tmpDir, `ui_in_${Date.now()}.pdf`);
+        const outPath = path.join(tmpDir, `ui_qpdf_${Date.now()}.pdf`);
+        await fs.writeFile(inPath, bytes);
+        await exec(`qpdf --linearize --stream-data=preserve --recompress-flate --object-streams=preserve --qdf ${inPath} ${outPath} | cat`);
+        bytes = await fs.readFile(outPath);
+      } catch {}
+    }
+
+    bytes = await normalizeWithPdfLib(bytes);
+    let pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
+    await applyCentralWatermark(pdfDoc, watermarkText);
+    const watermarkedBytes = await pdfDoc.save();
+    const documentHash = createHash('sha256').update(watermarkedBytes).digest('hex');
+    pdfDoc = await PDFDocument.load(watermarkedBytes);
+    await addSecurityFeatures(pdfDoc, watermarkText, documentHash);
+    const finalBytes = await pdfDoc.save();
+
+    const outName = originalName.replace(/\.pdf$/i, '') + '_watermarked.pdf';
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${outName}"`);
+    res.send(Buffer.from(finalBytes));
+  } catch (e) {
+    console.error('[UI] Error al procesar PDF:', e?.message);
+    res.status(500).send('Error al procesar el PDF');
+  }
 });
 
 app.post('/webhook', async (req, res) => {
