@@ -365,6 +365,7 @@ app.get('/health', (_req, res) => {
 
 // UI simple para aplicar watermark manualmente
 app.get('/watermark', (_req, res) => {
+  const nowIso = new Date().toISOString().slice(0,16); // YYYY-MM-DDTHH:mm (UTC)
   const html = `<!doctype html>
   <html lang="es">
   <head>
@@ -398,7 +399,7 @@ app.get('/watermark', (_req, res) => {
         </div>
       </div>
       <label>Fecha/hora (opcional)</label>
-      <input type="datetime-local" name="timestamp" />
+      <input type="datetime-local" name="timestamp" value="${nowIso}" />
       <label>Texto personalizado (opcional)</label>
       <input type="text" name="text" placeholder="Sobrescribe nombre | email | fecha" />
       <div class="hint">Si indicas "Texto personalizado", se usará tal cual como watermark.</div>
