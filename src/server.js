@@ -46,8 +46,9 @@ async function compressIfTooLarge(inputPath, maxBytes = 17 * 1024 * 1024) {
     if (stat.size <= maxBytes) return inputPath;
     console.log(`[FLOW] Compresión: ${inputPath} pesa ${(stat.size / (1024*1024)).toFixed(1)} MiB, recomprimiendo...`);
     const outPath = inputPath.replace(/\.pdf$/i, '.compressed.pdf');
-    // Perfil /ebook mantiene buena calidad visual a tamaño razonable
-    await exec(`gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.6 -dPDFSETTINGS=/ebook -dDetectDuplicateImages=true -dCompressFonts=true -dDownsampleColorImages=true -dColorImageResolution=144 -dDownsampleGrayImages=true -dGrayImageResolution=144 -dDownsampleMonoImages=true -dMonoImageResolution=144 -sOutputFile=${outPath} -f ${inputPath} | cat`);
+    // Perfil /prepress con alta resolución para mantener calidad de imágenes
+    // Resolución aumentada a 300 DPI para mejor calidad visual
+    await exec(`gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.6 -dPDFSETTINGS=/prepress -dDetectDuplicateImages=true -dCompressFonts=true -dDownsampleColorImages=true -dColorImageResolution=300 -dDownsampleGrayImages=true -dGrayImageResolution=300 -dDownsampleMonoImages=true -dMonoImageResolution=300 -dAutoFilterColorImages=false -dAutoFilterGrayImages=false -dColorImageFilter=/DCTEncode -dGrayImageFilter=/DCTEncode -dColorImageDownsampleThreshold=1.0 -dGrayImageDownsampleThreshold=1.0 -dJPEGQ=95 -sOutputFile=${outPath} -f ${inputPath} | cat`);
     const outStat = await fs.stat(outPath);
     console.log(`[FLOW] Compresión lista: ${(outStat.size / (1024*1024)).toFixed(1)} MiB`);
     // Si no mejora, usa el original
@@ -428,7 +429,7 @@ app.post('/watermark', upload.single('pdf'), async (req, res) => {
         const inPath = path.join(tmpDir, `ui_in_${Date.now()}.pdf`);
         const outPath = path.join(tmpDir, `ui_gs_${Date.now()}.pdf`);
         await fs.writeFile(inPath, bytes);
-        await exec(`gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.6 -sOutputFile=${outPath} -f ${inPath} | cat`);
+        await exec(`gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.6 -dAutoFilterColorImages=false -dAutoFilterGrayImages=false -dColorImageFilter=/DCTEncode -dGrayImageFilter=/DCTEncode -sOutputFile=${outPath} -f ${inPath} | cat`);
         bytes = await fs.readFile(outPath);
       } catch {}
     }
@@ -669,7 +670,7 @@ app.post('/webhook', async (req, res) => {
                 const inPath = path.join(tmpDir, `in_${Date.now()}.pdf`);
                 const outPath = path.join(tmpDir, `gs_out_${Date.now()}.pdf`);
                 await fs.writeFile(inPath, bytes);
-                await exec(`gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.6 -sOutputFile=${outPath} -f ${inPath} | cat`);
+                await exec(`gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -dCompatibilityLevel=1.6 -dAutoFilterColorImages=false -dAutoFilterGrayImages=false -dColorImageFilter=/DCTEncode -dGrayImageFilter=/DCTEncode -sOutputFile=${outPath} -f ${inPath} | cat`);
                 bytes = await fs.readFile(outPath);
               } catch {}
             }

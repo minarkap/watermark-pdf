@@ -67,8 +67,9 @@ export async function addSecurityFeatures(pdfDoc, watermarkText, documentHash) {
     const dpi = Number(process.env.BANNER_DPI || 200); // Ajustable por env
     try {
       // log mínimo por página
+      // NO paletizar para preservar correctamente los colores
       const bandPngBuffer = await sharp(Buffer.from(bandSvg), { density: dpi })
-        .png({ palette: true, compressionLevel: 9, effort: 6 })
+        .png({ compressionLevel: 6, quality: 90 })
         .toBuffer();
       const bandImage = await pdfDoc.embedPng(bandPngBuffer);
 
