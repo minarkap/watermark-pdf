@@ -185,13 +185,17 @@ app.use(cookieParser());
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
 // Autenticación para la UI de watermark
-const UI_PASSWORD = process.env.PASSWORD || '';
+const UI_PASSWORD = process.env.PASSWORD;
+if (!UI_PASSWORD) {
+  console.warn('⚠️  WARNING: PASSWORD no está configurada en .env - la UI de watermark estará DESPROTEGIDA');
+}
 const UI_SESSION_SECRET = process.env.SESSION_SECRET || randomBytes(32).toString('hex');
 const uiSessions = new Map(); // token -> expiresAt
+const SESSION_DURATION_MS = 1000 * 60 * 60 * 24 * 30; // 30 días
 
 function generateUISession() {
   const token = randomBytes(32).toString('hex');
-  const expiresAt = Date.now() + 1000 * 60 * 60 * 24; // 24 horas
+  const expiresAt = Date.now() + SESSION_DURATION_MS;
   uiSessions.set(token, expiresAt);
   return token;
 }
@@ -209,10 +213,6 @@ function isUISessionValid(token) {
 
 // Middleware para proteger rutas de la UI
 function requireUIAuth(req, res, next) {
-  // Si no hay contraseña configurada, permitir acceso
-  if (!UI_PASSWORD) {
-    return next();
-  }
   const sessionToken = req.cookies?.ui_session;
   if (isUISessionValid(sessionToken)) {
     return next();
@@ -227,13 +227,16 @@ function requireUIAuth(req, res, next) {
 
 app.post('/watermark/login', express.urlencoded({ extended: true }), (req, res) => {
   const { password } = req.body || {};
+  if (!UI_PASSWORD) {
+    return res.status(500).send('ERROR: PASSWORD no está configurada en el servidor. Contacta al administrador.');
+  }
   if (password === UI_PASSWORD) {
     const sessionToken = generateUISession();
     res.cookie('ui_session', sessionToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: 1000 * 60 * 60 * 24, // 24 horas
+      maxAge: SESSION_DURATION_MS, // 30 días
     });
     return res.redirect('/watermark');
   }
@@ -434,8 +437,9 @@ app.get('/health', (_req, res) => {
 
 // UI simple para aplicar watermark manualmente
 app.get('/watermark', (req, res) => {
-  // Verificación de autenticación integrada
-  if (UI_PASSWORD && !isUISessionValid(req.cookies?.ui_session)) {
+  // Verificación de autenticación integrada - SIEMPRE requiere contraseña
+  if (!isUISessionValid(req.cookies?.ui_session)) {
+    const warningMessage = !UI_PASSWORD ? '<div class="error">⚠️ ADVERTENCIA: PASSWORD no está configurada en el servidor. Contacta al administrador.</div>' : '';
     const html = `<!doctype html>
     <html lang="es">
     <head>
@@ -450,12 +454,13 @@ app.get('/watermark', (req, res) => {
         input[type=password]{width:100%;padding:12px;border:1px solid #ccc;border-radius:8px;box-sizing:border-box;font-size:1rem}
         button{width:100%;background:#111;color:#fff;border:0;padding:14px;border-radius:8px;font-weight:700;margin-top:20px;cursor:pointer;font-size:1rem}
         button:hover{background:#333}
-        .error{background:#fee;border:1px solid #fcc;color:#c00;padding:10px;border-radius:6px;margin-bottom:16px;text-align:center}
+        .error{background:#fee;border:1px solid #fcc;color:#c00;padding:10px;border-radius:6px;margin-bottom:16px;text-align:center;font-size:0.9rem}
       </style>
     </head>
     <body>
       <div class="card">
         <h1>🔐 Acceso Watermark</h1>
+        ${warningMessage}
         ${req.query.error ? '<div class="error">Contraseña incorrecta</div>' : ''}
         <form method="post" action="/watermark/login">
           <label for="password">Contraseña</label>
