@@ -8,7 +8,7 @@ import fsSync from 'fs';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
 import { PDFDocument } from 'pdf-lib';
-import { createHash } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { exec as execCb } from 'child_process';
 import { promisify } from 'util';
 import { Queue, Worker } from 'bullmq';
@@ -16,6 +16,7 @@ import IORedis from 'ioredis';
 import Ajv from 'ajv';
 import archiver from 'archiver';
 import multer from 'multer';
+import cookieParser from 'cookie-parser';
 const exec = promisify(execCb);
 
 // Lock para descargas concurrentes en modo inline/worker
@@ -180,7 +181,74 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
+app.use(cookieParser());
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+
+// Autenticación para la UI de watermark
+const UI_PASSWORD = process.env.PASSWORD || '';
+const UI_SESSION_SECRET = process.env.SESSION_SECRET || randomBytes(32).toString('hex');
+const uiSessions = new Map(); // token -> expiresAt
+
+function generateUISession() {
+  const token = randomBytes(32).toString('hex');
+  const expiresAt = Date.now() + 1000 * 60 * 60 * 24; // 24 horas
+  uiSessions.set(token, expiresAt);
+  return token;
+}
+
+function isUISessionValid(token) {
+  if (!token) return false;
+  const expiresAt = uiSessions.get(token);
+  if (!expiresAt) return false;
+  if (Date.now() > expiresAt) {
+    uiSessions.delete(token);
+    return false;
+  }
+  return true;
+}
+
+// Middleware para proteger rutas de la UI
+function requireUIAuth(req, res, next) {
+  // Si no hay contraseña configurada, permitir acceso
+  if (!UI_PASSWORD) {
+    return next();
+  }
+  const sessionToken = req.cookies?.ui_session;
+  if (isUISessionValid(sessionToken)) {
+    return next();
+  }
+  // En lugar de redirigir, si es un POST devolvemos 403
+  if (req.method === 'POST') {
+    return res.status(403).send('Sesión expirada. Recarga la página.');
+  }
+  // Para GET, el propio handler de /watermark mostrará el login
+  next();
+}
+
+app.post('/watermark/login', express.urlencoded({ extended: true }), (req, res) => {
+  const { password } = req.body || {};
+  if (password === UI_PASSWORD) {
+    const sessionToken = generateUISession();
+    res.cookie('ui_session', sessionToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 1000 * 60 * 60 * 24, // 24 horas
+    });
+    return res.redirect('/watermark');
+  }
+  return res.redirect('/watermark?error=1');
+});
+
+// Logout
+app.get('/watermark/logout', (req, res) => {
+  const sessionToken = req.cookies?.ui_session;
+  if (sessionToken) {
+    uiSessions.delete(sessionToken);
+  }
+  res.clearCookie('ui_session');
+  res.redirect('/watermark');
+});
 
 // Storage persistente de zips por token (memoria + disco)
 const downloadTokens = new Map(); // token -> { path, expiresAt, filename }
@@ -365,7 +433,42 @@ app.get('/health', (_req, res) => {
 });
 
 // UI simple para aplicar watermark manualmente
-app.get('/watermark', (_req, res) => {
+app.get('/watermark', (req, res) => {
+  // Verificación de autenticación integrada
+  if (UI_PASSWORD && !isUISessionValid(req.cookies?.ui_session)) {
+    const html = `<!doctype html>
+    <html lang="es">
+    <head>
+      <meta charset="utf-8"/>
+      <meta name="viewport" content="width=device-width, initial-scale=1"/>
+      <title>Acceso Restringido - Watermark</title>
+      <style>
+        body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;padding:24px;max-width:400px;margin:80px auto;background:#f5f5f5}
+        .card{background:#fff;border:1px solid #ddd;border-radius:12px;padding:32px;box-shadow:0 2px 8px rgba(0,0,0,.05)}
+        h1{font-size:1.5rem;margin:0 0 24px;text-align:center}
+        label{display:block;margin:0 0 8px;font-weight:600}
+        input[type=password]{width:100%;padding:12px;border:1px solid #ccc;border-radius:8px;box-sizing:border-box;font-size:1rem}
+        button{width:100%;background:#111;color:#fff;border:0;padding:14px;border-radius:8px;font-weight:700;margin-top:20px;cursor:pointer;font-size:1rem}
+        button:hover{background:#333}
+        .error{background:#fee;border:1px solid #fcc;color:#c00;padding:10px;border-radius:6px;margin-bottom:16px;text-align:center}
+      </style>
+    </head>
+    <body>
+      <div class="card">
+        <h1>🔐 Acceso Watermark</h1>
+        ${req.query.error ? '<div class="error">Contraseña incorrecta</div>' : ''}
+        <form method="post" action="/watermark/login">
+          <label for="password">Contraseña</label>
+          <input type="password" name="password" id="password" placeholder="Introduce la contraseña" required autofocus />
+          <button type="submit">Entrar</button>
+        </form>
+      </div>
+    </body>
+    </html>`;
+    return res.type('html').send(html);
+  }
+
+  const nowIso = new Date().toISOString().slice(0,16); // YYYY-MM-DDTHH:mm (UTC)
   const nowIso = new Date().toISOString().slice(0,16); // YYYY-MM-DDTHH:mm (UTC)
   const html = `<!doctype html>
   <html lang="es">
@@ -411,7 +514,7 @@ app.get('/watermark', (_req, res) => {
   res.type('html').send(html);
 });
 
-app.post('/watermark', upload.single('pdf'), async (req, res) => {
+app.post('/watermark', requireUIAuth, upload.single('pdf'), async (req, res) => {
   try {
     if (!req?.file?.buffer) return res.status(400).send('Falta el archivo PDF');
     const originalName = String(req.file.originalname || 'document.pdf').replace(/[^a-zA-Z0-9_. -]/g, '_');

@@ -16,6 +16,7 @@
     "ajv": "^8.12.0",
     "archiver": "^6.0.2",
     "bullmq": "^5.7.1",
+    "cookie-parser": "^1.4.7",
     "dotenv": "^17.2.2",
     "express": "^5.1.0",
     "googleapis": "^159.0.0",
