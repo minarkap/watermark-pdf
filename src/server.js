@@ -469,7 +469,6 @@ app.get('/watermark', (req, res) => {
   }
 
   const nowIso = new Date().toISOString().slice(0,16); // YYYY-MM-DDTHH:mm (UTC)
-  const nowIso = new Date().toISOString().slice(0,16); // YYYY-MM-DDTHH:mm (UTC)
   const html = `<!doctype html>
   <html lang="es">
   <head>
