@@ -1,5 +1,6 @@
 import express from 'express';
 import dotenv from 'dotenv';
+import rateLimit from 'express-rate-limit';
 import { applyCentralWatermark } from './watermark.js';
 import { addSecurityFeatures } from './security.js';
 import { sendEmailWithAttachments } from './mailer.js';
@@ -27,16 +28,67 @@ const REDIS_URL = process.env.REDIS_URL || process.env.UPSTASH_REDIS_URL || '';
 let connection = null;
 let pdfQueue = null;
 let workerActive = false;
+let redisHealthy = false;
+
+// Verificar Redis con timeout
+async function testRedisConnection(url) {
+  try {
+    const u = (() => { try { return new URL(url); } catch { return null; } })();
+    const needTls = (u && u.protocol === 'rediss:') || process.env.REDIS_FORCE_TLS === 'true';
+    const testClient = new IORedis(url, {
+      maxRetriesPerRequest: 1,
+      connectTimeout: 3000,
+      enableReadyCheck: true,
+      lazyConnect: true,
+      retryStrategy: () => null, // No reintentar
+      ...(needTls ? { tls: { rejectUnauthorized: false } } : {}),
+    });
+    
+    await testClient.connect();
+    await testClient.ping();
+    await testClient.quit();
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 if (REDIS_URL) {
   const u = (() => { try { return new URL(REDIS_URL); } catch { return null; } })();
   const needTls = (u && u.protocol === 'rediss:') || process.env.REDIS_FORCE_TLS === 'true';
-  connection = { url: REDIS_URL, maxRetriesPerRequest: null, enableReadyCheck: false, ...(needTls ? { tls: { rejectUnauthorized: false } } : {}) };
+  connection = { 
+    url: REDIS_URL, 
+    maxRetriesPerRequest: 3,
+    enableReadyCheck: false,
+    connectTimeout: 5000,
+    retryStrategy: (times) => {
+      if (times > 3) {
+        console.error('[QUEUE] Demasiados reintentos Redis, desactivando cola');
+        return null;
+      }
+      return Math.min(times * 1000, 3000);
+    },
+    ...(needTls ? { tls: { rejectUnauthorized: false } } : {}) 
+  };
+  
   try {
-    pdfQueue = new Queue('pdf-jobs', { connection });
+    // Verificar conexión antes de crear la cola
+    console.log('[QUEUE] Verificando conexión a Redis...');
+    redisHealthy = await testRedisConnection(REDIS_URL);
+    
+    if (redisHealthy) {
+      pdfQueue = new Queue('pdf-jobs', { connection });
+      console.log('[QUEUE] Cola BullMQ inicializada correctamente');
+    } else {
+      console.warn('[QUEUE] Redis no accesible, usando fallback inline');
+      pdfQueue = null;
+      connection = null;
+    }
   } catch (e) {
     console.warn('[QUEUE] No se pudo inicializar Redis/BullMQ, usando fallback inline:', e?.message);
     pdfQueue = null;
     connection = null;
+    redisHealthy = false;
   }
 }
 
@@ -66,19 +118,43 @@ async function compressIfTooLarge(inputPath, maxBytes = 17 * 1024 * 1024) {
 
 // Normaliza bytes de PDF copiando todas las páginas a un nuevo documento
 const normalizeCache = new Map(); // hash(bytes)->bytes normalizados
+const MAX_CACHE_SIZE = 10; // Máximo 10 documentos en caché
+const MAX_CACHE_BYTES = 50 * 1024 * 1024; // 50 MB total
+let currentCacheBytes = 0;
+
 async function normalizeWithPdfLib(bytes) {
   try {
     const hash = createHash('sha256').update(bytes).digest('hex');
-    if (normalizeCache.has(hash)) return normalizeCache.get(hash);
+    if (normalizeCache.has(hash)) {
+      console.log('[CACHE] Hit - usando PDF normalizado del caché');
+      return normalizeCache.get(hash);
+    }
+    
     const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
     const out = await PDFDocument.create();
     const indices = src.getPages().map((_, idx) => idx);
     const copied = await out.copyPages(src, indices);
     for (const p of copied) out.addPage(p);
     const normalized = await out.save();
+    
+    // Limpiar caché si está muy grande (por tamaño o cantidad)
+    const normalizedSize = normalized.byteLength;
+    while (normalizeCache.size >= MAX_CACHE_SIZE || currentCacheBytes + normalizedSize > MAX_CACHE_BYTES) {
+      const firstKey = normalizeCache.keys().next().value;
+      if (!firstKey) break;
+      const oldValue = normalizeCache.get(firstKey);
+      currentCacheBytes -= oldValue?.byteLength || 0;
+      normalizeCache.delete(firstKey);
+      console.log(`[CACHE] Limpiado - tamaño: ${normalizeCache.size}, bytes: ${(currentCacheBytes / 1024 / 1024).toFixed(1)}MB`);
+    }
+    
     normalizeCache.set(hash, normalized);
+    currentCacheBytes += normalizedSize;
+    console.log(`[CACHE] Guardado - tamaño: ${normalizeCache.size}, bytes: ${(currentCacheBytes / 1024 / 1024).toFixed(1)}MB`);
+    
     return normalized;
   } catch (e) {
+    console.warn('[CACHE] Error al normalizar, usando bytes originales:', e?.message);
     return bytes;
   }
 }
@@ -183,6 +259,22 @@ const app = express();
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+
+// Rate limiting para webhooks (protección contra abuso)
+const webhookLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minuto
+  max: 10, // máximo 10 peticiones por minuto por IP
+  message: 'Demasiadas peticiones desde esta IP, intenta de nuevo más tarde.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Permitir más peticiones desde IPs de confianza (opcional)
+  skip: (req) => {
+    // Si quieres whitelist de IPs, añádelas aquí
+    // const trustedIPs = ['1.2.3.4'];
+    // return trustedIPs.includes(req.ip);
+    return false;
+  },
+});
 
 // Autenticación para la UI de watermark
 const UI_PASSWORD = process.env.PASSWORD;
@@ -350,10 +442,41 @@ app.get('/download/:token', async (req, res) => {
   }
 });
 
-// Limpieza periódica de zips expirados
+// Función para limpiar archivos temporales antiguos
+async function cleanupTempFiles() {
+  try {
+    const tmpDir = path.join(__dirname, '..', 'tmp');
+    const files = await fs.readdir(tmpDir).catch(() => []);
+    const now = Date.now();
+    let cleaned = 0;
+    
+    for (const file of files) {
+      try {
+        const filePath = path.join(tmpDir, file);
+        const stats = await fs.stat(filePath);
+        
+        // Eliminar archivos de más de 1 hora
+        if (now - stats.mtimeMs > 3600000) {
+          await fs.rm(filePath).catch(() => {});
+          cleaned++;
+        }
+      } catch {}
+    }
+    
+    if (cleaned > 0) {
+      console.log(`[CLEANUP] Eliminados ${cleaned} archivos temporales antiguos`);
+    }
+  } catch (e) {
+    console.warn('[CLEANUP] Error en limpieza de temporales:', e?.message);
+  }
+}
+
+// Limpieza periódica de zips expirados y archivos temporales
 setInterval(async () => {
   const now = Date.now();
   let dirty = false;
+  
+  // Limpiar zips expirados
   for (const [token, entry] of downloadTokens.entries()) {
     if (now > entry.expiresAt) {
       try { await fs.rm(entry.path).catch(() => {}); } catch {}
@@ -362,7 +485,13 @@ setInterval(async () => {
     }
   }
   if (dirty) await saveTokensToDisk();
+  
+  // Limpiar archivos temporales
+  await cleanupTempFiles();
 }, 60 * 60 * 1000); // cada hora
+
+// Limpiar temporales al inicio
+cleanupTempFiles();
 
 // Validación de esquema del webhook (básico)
 const ajv = new Ajv({ removeAdditional: true, allErrors: true });
@@ -570,7 +699,7 @@ app.post('/watermark', requireUIAuth, upload.single('pdf'), async (req, res) => 
   }
 });
 
-app.post('/webhook', async (req, res) => {
+app.post('/webhook', webhookLimiter, async (req, res) => {
   // Soportar payload de Kajabi: puede venir como array de eventos
   const bodyRaw = req.body || {};
   const body = Array.isArray(bodyRaw) ? (bodyRaw[0] || {}) : bodyRaw;
@@ -908,7 +1037,7 @@ app.post('/webhook', async (req, res) => {
 });
 
 // Webhook Hotmart (PURCHASE_APPROVED)
-app.post('/webhook/hotmart', async (req, res) => {
+app.post('/webhook/hotmart', webhookLimiter, async (req, res) => {
   try {
     const raw = req.body || {};
     const wrapper = Array.isArray(raw) ? (raw[0] || {}) : raw;
@@ -1228,8 +1357,13 @@ app.post('/webhook/hotmart', async (req, res) => {
 });
 
 // Worker (si hay Redis) – procesa en el mismo contenedor
-if (pdfQueue && connection) {
+if (pdfQueue && connection && redisHealthy) {
   try {
+    console.log('[QUEUE] Iniciando Worker...');
+    
+    let errorCount = 0;
+    let lastErrorTime = 0;
+    
     const worker = new Worker(
       'pdf-jobs',
       async (job) => {
@@ -1514,13 +1648,67 @@ if (pdfQueue && connection) {
         throw err;
       }
     },
-    { connection, concurrency: 1 }
+    { 
+      connection: {
+        ...connection,
+        retryStrategy: (times) => {
+          if (times > 3) {
+            console.error('[QUEUE] Demasiados reintentos de conexión, deteniendo Worker');
+            workerActive = false;
+            return null;
+          }
+          return Math.min(times * 1000, 3000);
+        },
+      },
+      concurrency: 1,
+    }
   );
-  worker.on('ready', () => { workerActive = true; console.log('[QUEUE] Worker ready'); });
-  worker.on('error', (err) => { workerActive = false; console.warn('[QUEUE] Worker error:', err?.message); });
+  
+  worker.on('ready', () => { 
+    workerActive = true;
+    errorCount = 0;
+    console.log('[QUEUE] ✅ Worker listo y activo'); 
+  });
+  
+  worker.on('error', (err) => { 
+    const now = Date.now();
+    
+    // Detectar loop infinito de errores (más de 5 errores en 10 segundos)
+    if (now - lastErrorTime < 10000) {
+      errorCount++;
+    } else {
+      errorCount = 1;
+    }
+    lastErrorTime = now;
+    
+    console.warn(`[QUEUE] Worker error (${errorCount}):`, err?.message);
+    
+    // Si hay demasiados errores, desactivar permanentemente
+    if (errorCount > 5) {
+      console.error('[QUEUE] ⚠️  Demasiados errores consecutivos, desactivando Worker permanentemente');
+      console.error('[QUEUE] ℹ️  Usando modo fallback inline para procesar trabajos');
+      workerActive = false;
+      worker.close().catch(() => {});
+    }
+  });
+  
+  worker.on('failed', (job, err) => {
+    console.error(`[QUEUE] Job ${job?.id} falló:`, err?.message);
+  });
+  
+  worker.on('closed', () => {
+    console.log('[QUEUE] Worker cerrado');
+    workerActive = false;
+  });
+  
   } catch (e) {
     console.warn('[QUEUE] Worker no iniciado, usando fallback inline:', e?.message);
     workerActive = false;
+  }
+} else {
+  if (REDIS_URL && !redisHealthy) {
+    console.warn('[QUEUE] ⚠️  Redis configurado pero no accesible. Usando modo fallback inline.');
+    console.warn('[QUEUE] ℹ️  Verifica que el servicio Redis esté activo y la URL sea correcta.');
   }
 }
 
